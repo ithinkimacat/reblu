@@ -1,0 +1,13 @@
+{
+  "name": "reblu",
+  "version": "1.0.0",
+  "description": "Red chases Blue — multiplayer emergent grid game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

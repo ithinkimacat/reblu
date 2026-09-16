@@ -1,0 +1,141 @@
+<title>reblu</title>
+<style>
+  :root { --bg:#0e1116; --fg:#e6e6e6; --mut:#8b98a5; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px; }
+  #hud { display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  #c { background:#161b22; border-radius:8px; max-width:min(92vmin,640px); touch-action:none; }
+  .mut { color:var(--mut); } b { font-size:18px; }
+  #msg { min-height:20px; font-weight:600; }
+  kbd { background:#222a33; border-radius:4px; padding:1px 5px; }
+</style>
+
+<div id="hud">
+  <span>🎲 <b id="roll">–</b></span>
+  <span>steps <b id="steps">0</b></span>
+  <span>⏱ <b id="timer">–</b></span>
+  <span class="mut">WASD / arrows / gamepad · <kbd>Esc</kbd> or B = clear</span>
+</div>
+<div id="msg"></div>
+<canvas id="c"></canvas>
+<div id="score" class="mut"></div>
+<div id="overlay" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#000a;font-size:32px;font-weight:700"></div>
+
+<script>
+const S = { me: null, st: null, queue: [], ws: null, lastStateAt: 0 };
+const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
+
+const url = new URL(location.href);
+const name = url.searchParams.get('name') || prompt('Your name?') || 'anon';
+
+function connect() {
+  const ws = new WebSocket(location.origin.replace(/^http/, 'ws'));
+  S.ws = ws;
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name }));
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.t === 'welcome') S.me = m.id;
+    else if (m.t === 'state') {
+      const tickChanged = !S.st || S.st.tick !== m.tick;
+      S.st = m; S.lastStateAt = performance.now();
+      if (tickChanged) S.queue = []; // tick boundary consumed the queue server-side
+    }
+  };
+  ws.onclose = () => setTimeout(connect, 1500); // auto-reconnect
+}
+connect();
+
+const DIRS = { up: {dx:0,dy:-1}, down: {dx:0,dy:1}, left: {dx:-1,dy:0}, right: {dx:1,dy:0} };
+function pushStep(d) {
+  const me = S.st && S.st.players.find(p => p.id === S.me);
+  if (!me || me.dead || S.st.phase !== 'play') return;
+  if (S.queue.length >= me.roll) return flash('roll spent');
+  S.queue.push(d);
+  sendQueue();
+}
+function sendQueue() { if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'queue', dirs: S.queue })); }
+function flash(t) { const el = document.getElementById('msg'); el.textContent = t; setTimeout(() => el.textContent = '', 700); }
+
+const KEYS = { w:'up', arrowup:'up', s:'down', arrowdown:'down', a:'left', arrowleft:'left', d:'right', arrowright:'right' };
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (KEYS[k]) { e.preventDefault(); pushStep(DIRS[KEYS[k]]); }
+  else if (k === 'escape') { S.queue = []; sendQueue(); }
+});
+
+// gamepad: dpad + left stick edge detection
+let padPrev = {};
+(function pollPad() {
+  const gp = navigator.getGamepads && [...navigator.getGamepads()].find(Boolean);
+  if (gp) {
+    const ax = Math.abs(gp.axes[0]) > 0.5 ? Math.sign(gp.axes[0]) : 0;
+    const ay = Math.abs(gp.axes[1]) > 0.5 ? Math.sign(gp.axes[1]) : 0;
+    const cur = {
+      up: gp.buttons[12]?.pressed || ay < 0, down: gp.buttons[13]?.pressed || ay > 0,
+      left: gp.buttons[14]?.pressed || ax < 0, right: gp.buttons[15]?.pressed || ax > 0,
+      clear: gp.buttons[1]?.pressed,
+    };
+    for (const d of ['up','down','left','right']) if (cur[d] && !padPrev[d]) pushStep(DIRS[d]);
+    if (cur.clear && !padPrev.clear) { S.queue = []; sendQueue(); }
+    padPrev = cur;
+  }
+  requestAnimationFrame(pollPad);
+})();
+
+function draw() {
+  const st = S.st;
+  const size = Math.min(innerWidth, innerHeight) * 0.9;
+  const clamped = Math.min(size, 640);
+  cvs.width = cvs.height = clamped;
+  const cell = clamped / 25;
+  ctx.clearRect(0, 0, clamped, clamped);
+  // grid
+  ctx.strokeStyle = '#21262d';
+  for (let i = 0; i <= 25; i++) {
+    ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,clamped); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(clamped,i*cell); ctx.stroke();
+  }
+  if (!st) { requestAnimationFrame(draw); return; }
+  const at = (x, y) => [ (x+0.5)*cell, (y+0.5)*cell ];
+  // start / finish
+  ctx.fillStyle = '#2ea043'; ctx.fillRect(0, 0, cell, cell);
+  ctx.fillStyle = '#ffd54f'; ctx.fillRect(24*cell, 24*cell, cell, cell);
+  ctx.fillStyle = '#000'; ctx.font = `${cell*0.6}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('🏁', ...at(24, 24));
+  // obstacles
+  ctx.fillStyle = '#3a3f45';
+  for (const [x, y] of st.obs) ctx.fillRect(x*cell+1, y*cell+1, cell-2, cell-2);
+  // blasts
+  ctx.fillStyle = '#ff7b7266';
+  for (const b of st.blasts) for (const [x, y] of b.cells) ctx.fillRect(x*cell, y*cell, cell, cell);
+  // dots
+  for (const b of st.blues) { ctx.fillStyle = b.boost ? '#58a6ff' : '#1f6feb'; ctx.beginPath(); ctx.arc(...at(b.x, b.y), cell*0.35, 0, 7); ctx.fill(); }
+  for (const r of st.reds) { ctx.fillStyle = '#f85149'; ctx.beginPath(); ctx.arc(...at(r.x, r.y), cell*0.32, 0, 7); ctx.fill(); }
+  // players (squares) + queued ghost path for me
+  for (const p of st.players) {
+    ctx.globalAlpha = p.dead ? 0.3 : 1;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x*cell+2, p.y*cell+2, cell-4, cell-4);
+    if (p.rider) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(p.x*cell+3, p.y*cell+3, cell-6, cell-6); }
+    ctx.globalAlpha = 1;
+  }
+  const me = st.players.find(p => p.id === S.me);
+  if (me && !me.dead && S.queue.length) {
+    ctx.globalAlpha = 0.4; ctx.fillStyle = me.color;
+    let [x, y] = [me.x, me.y];
+    for (const d of S.queue) { x += d.dx; y += d.dy; ctx.fillRect(x*cell+cell/4, y*cell+cell/4, cell/2, cell/2); }
+    ctx.globalAlpha = 1;
+  }
+  // hud
+  document.getElementById('roll').textContent = me ? (me.dead ? '💀' : me.roll) : '–';
+  document.getElementById('steps').textContent = `${S.queue.length}/${me ? me.roll : 0}`;
+  const left = Math.max(0, st.tickMs - (performance.now() - S.lastStateAt));
+  document.getElementById('timer').textContent = (left/1000).toFixed(1);
+  document.getElementById('score').textContent =
+    st.players.map(p => `${p.name}${p.id === S.me ? ' (you)' : ''}: ${p.wins}`).join(' · ');
+  const ov = document.getElementById('overlay');
+  if (st.phase === 'over') { ov.style.display = 'flex'; ov.textContent = `🏆 ${st.winner} wins!`; }
+  else ov.style.display = 'none';
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
