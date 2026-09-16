@@ -46,8 +46,11 @@ const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
 
 const name = new URL(location.href).searchParams.get('name') || prompt('Your name?') || 'anon';
 
+// same-origin WS by default; hosted statically (e.g. GitHub Pages), point at the game server: ?srv=https://reblu.onrender.com
+const SRV = new URL(location.href).searchParams.get('srv') || location.origin;
+
 function connect() {
-  const ws = new WebSocket(location.origin.replace(/^http/, 'ws'));
+  const ws = new WebSocket(SRV.replace(/^http/, 'ws'));
   S.ws = ws;
   ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name }));
   ws.onmessage = e => {
