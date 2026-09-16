@@ -1,8 +1,7 @@
 const assert = require('assert');
 const mod = require('./server.js');
-const { bfsPath, losBlocked, newGame, tick, key } = mod;
-// newGame() reassigns state — always read it via mod.G
-const G = () => mod.G;
+const { bfsPath, losBlocked, newGame, tryStep, evalLanding, key } = mod;
+const G = () => mod.G; // newGame() reassigns state — always read live
 
 // pathing avoids obstacles
 newGame();
@@ -21,12 +20,24 @@ newGame();
   assert.strictEqual(losBlocked(0, 0, 0, 2), false, 'clear line');
 }
 
-// full tick runs, blue spawns every 2 ticks, red every 4
+// player step rules: orthogonal, blocked by obstacle and other players, spends roll
 {
-  G().obs.clear();
-  for (let i = 0; i < 4; i++) tick();
-  assert(G().blues.length >= 1, 'blue spawned');
-  assert(G().reds.length >= 1, 'red spawned');
+  newGame();
+  G().obs.clear(); G().obs.add(key(1, 0));
+  const g = G();
+  const A = { id: 1, name: 'a', color: '#fff', x: 0, y: 0, roll: 3, used: 0, lastDir: null, rider: null, dead: false, wins: 0 };
+  const B = { id: 2, name: 'b', color: '#fff', x: 0, y: 1, roll: 0, used: 0, lastDir: null, rider: null, dead: false, wins: 0 };
+  g.players.set(1, A); g.players.set(2, B);
+  g.phase = 'move'; g.turnId = 1;
+  tryStep(1, 1, 0);  assert.deepStrictEqual([A.x, A.y], [0, 0], 'obstacle blocks');
+  tryStep(1, 0, 1);  assert.deepStrictEqual([A.x, A.y], [0, 0], 'player blocks');
+  tryStep(1, 2, 0);  assert.deepStrictEqual([A.x, A.y], [0, 0], 'non-orthogonal rejected');
+  tryStep(2, 0, -1); assert.deepStrictEqual([B.x, B.y], [0, 1], 'not your turn');
+  tryStep(1, 0, -1); assert.deepStrictEqual([A.x, A.y], [0, 0], 'edge blocks');
+  g.obs.clear(); B.x = 5; B.y = 5;
+  tryStep(1, 1, 0); assert.deepStrictEqual([A.x, A.y], [1, 0], 'clean step works');
+  tryStep(1, 1, 0); tryStep(1, 1, 0);
+  tryStep(1, 1, 0);
+  assert.deepStrictEqual([A.x, A.y], [3, 0], 'roll caps steps');
 }
-
 console.log('ok');
