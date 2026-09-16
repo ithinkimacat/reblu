@@ -41,3 +41,4 @@ newGame();
   assert.deepStrictEqual([A.x, A.y], [3, 0], 'roll caps steps');
 }
 console.log('ok');
+process.exit(0); // dot-phase timers would otherwise keep the loop alive
