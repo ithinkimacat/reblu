@@ -36,6 +36,7 @@ function newGame(keepPlayers) {
     blues: [],           // {id,x,y,boost}  boost 2=>speed 4 next, 1=>3, 0=>2
     reds: [],            // {id,x,y,px,py}
     lastBlasts: [],
+    cfg: { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3 }, // live-tunable via client panel
     turnId: null,
     turnEndsAt: 0,
     nextDotId: 1,
@@ -176,7 +177,7 @@ function animateDotMoves(movers, done) {
 function bluePhase(done) {
   const movers = G.blues.map(b => ({
     dot: b, ref: 'b' + b.id,
-    path: bfsPath(b.x, b.y, FINISH[0], FINISH[1], b.boost === 2 ? 4 : b.boost === 1 ? 3 : 2),
+    path: bfsPath(b.x, b.y, FINISH[0], FINISH[1], G.cfg.blueSpeed + b.boost),
   }));
   for (const b of G.blues) if (b.boost > 0) b.boost--;
   animateDotMoves(movers, () => {
@@ -206,7 +207,7 @@ function redPhase(done) {
     }
     if (!best) return null;
     r.px = r.x; r.py = r.y;
-    return { dot: r, ref: 'r' + r.id, path: bfsPath(r.x, r.y, best.x, best.y, 3) };
+    return { dot: r, ref: 'r' + r.id, path: bfsPath(r.x, r.y, best.x, best.y, G.cfg.redSpeed) };
   }).filter(Boolean);
   animateDotMoves(movers, () => {
     // reds overlapping other reds annihilate each other (no blast)
@@ -256,13 +257,13 @@ function blastPhase() {
   }
 }
 
-// spawns: every 2nd / 4th tick (= player turn)
+// spawns: every cfg.blueEvery / cfg.redEvery ticks (= player turns)
 function spawnPhase() {
-  if (G.tick % 2 === 0) {
+  if (G.tick % G.cfg.blueEvery === 0) {
     const c = randomEmptyCell();
     if (c) G.blues.push({ id: G.nextDotId++, x: c[0], y: c[1], boost: 0 });
   }
-  if (G.tick % 4 === 0) {
+  if (G.tick % G.cfg.redEvery === 0) {
     const c = randomEmptyCell();
     if (c) G.reds.push({ id: G.nextDotId++, x: c[0], y: c[1], px: c[0], py: c[1] });
   }
@@ -332,6 +333,7 @@ function snapshot() {
     turnMsLeft: G.phase === 'move' ? Math.max(0, G.turnEndsAt - Date.now()) : 0,
     obs: [...G.obs].map(k => k.split(',').map(Number)),
     blasts: G.lastBlasts,
+    cfg: G.cfg,
     players: [...G.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
       roll: p.roll, used: p.used, dead: p.dead, wins: p.wins, rider: !!p.rider,
@@ -353,7 +355,8 @@ const srv = http.createServer((req, res) => {
   if (!f.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
   fs.readFile(f, (err, data) => {
     if (err) { res.writeHead(404); return res.end('nope'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' });
+    const MIMEt = MIME[path.extname(f)] || 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': MIMEt + (MIMEt.startsWith('text/') ? '; charset=utf-8' : '') });
     res.end(data);
   });
 });
@@ -368,6 +371,11 @@ wss.on('connection', ws => {
       clients.set(ws, id);
       addPlayer(id, m.name);
       ws.send(JSON.stringify({ t: 'welcome', id }));
+      broadcast();
+    } else if (m.t === 'config') {
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0));
+      for (const k of ['blueEvery', 'redEvery']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 10);
+      for (const k of ['blueSpeed', 'redSpeed']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 6);
       broadcast();
     } else if (m.t === 'step') {
       tryStep(clients.get(ws), m.dx | 0, m.dy | 0);

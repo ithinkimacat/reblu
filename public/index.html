@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>reblu</title>
 <style>
   :root { --bg:#0e1116; --fg:#e6e6e6; --mut:#8b98a5; }
@@ -14,6 +15,10 @@
   @keyframes dicepop { 0%{transform:scale(.3) rotate(-30deg);opacity:0} 25%{opacity:1} 60%{transform:scale(1.1) rotate(6deg);opacity:1} 100%{transform:scale(1) rotate(0);opacity:0} }
   #overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:#000a; font-size:36px; font-weight:800; z-index:10; animation:winpop .4s ease-out; }
   @keyframes winpop { from{transform:scale(.8);opacity:0} to{transform:scale(1);opacity:1} }
+  #panel { position:fixed; right:12px; top:12px; background:#161b22; border-radius:8px; padding:10px 12px; width:190px; box-shadow:0 8px 32px #0008; z-index:6; display:flex; flex-direction:column; gap:6px; }
+  #panel h3 { margin:0 0 2px; font-size:13px; }
+  #panel label { font-size:12px; color:var(--mut); display:flex; justify-content:space-between; }
+  #panel input[type=range] { width:100%; accent-color:#58a6ff; }
 </style>
 
 <div id="hud">
@@ -25,6 +30,17 @@
 <div id="score" class="mut"></div>
 <div id="dice"></div>
 <div id="overlay"></div>
+<div id="panel">
+  <h3>⚙️ Tuning</h3>
+  <label>🔵 spawn every <span id="v-blueEvery"></span> turns</label>
+  <input type="range" id="s-blueEvery" min="1" max="10" step="1">
+  <label>🔴 spawn every <span id="v-redEvery"></span> turns</label>
+  <input type="range" id="s-redEvery" min="1" max="10" step="1">
+  <label>🔵 speed <span id="v-blueSpeed"></span></label>
+  <input type="range" id="s-blueSpeed" min="1" max="6" step="1">
+  <label>🔴 speed <span id="v-redSpeed"></span></label>
+  <input type="range" id="s-redSpeed" min="1" max="6" step="1">
+</div>
 
 <script>
 const S = { me: null, st: null, ws: null, lastStateAt: 0, turnMsAtRecv: 0, lastTurnKey: '', ents: new Map(), blastFx: [] };
@@ -59,7 +75,18 @@ function onState(m) {
   S.st = m; S.lastStateAt = performance.now(); S.turnMsAtRecv = m.turnMsLeft;
   // sync smooth entities
   syncEnts(m);
+  // tuning panel follows server cfg
+  if (m.cfg) for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed']) {
+    document.getElementById('s-' + k).value = m.cfg[k];
+    document.getElementById('v-' + k).textContent = m.cfg[k];
+  }
 }
+
+for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed'])
+  document.getElementById('s-' + k).addEventListener('input', e => {
+    document.getElementById('v-' + k).textContent = e.target.value;
+    if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'config', [k]: +e.target.value }));
+  });
 
 function showDice(roll, mine) {
   const el = document.getElementById('dice');
