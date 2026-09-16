@@ -18,7 +18,8 @@
   #panel { position:fixed; right:12px; top:12px; background:#161b22; border-radius:8px; padding:10px 12px; width:190px; box-shadow:0 8px 32px #0008; z-index:6; display:flex; flex-direction:column; gap:6px; }
   #panel h3 { margin:0 0 2px; font-size:13px; }
   #panel label { font-size:12px; color:var(--mut); display:flex; justify-content:space-between; }
-  #panel input[type=range] { width:100%; accent-color:#58a6ff; }
+  #panel input[type=number] { width:52px; background:#0e1116; color:var(--fg); border:1px solid #30363d; border-radius:4px; padding:2px 4px; font:inherit; }
+  #panel label input { margin-left:auto; }
 </style>
 
 <div id="hud">
@@ -32,14 +33,11 @@
 <div id="overlay"></div>
 <div id="panel">
   <h3>⚙️ Tuning</h3>
-  <label>🔵 spawn every <span id="v-blueEvery"></span> turns</label>
-  <input type="range" id="s-blueEvery" min="1" max="10" step="1">
-  <label>🔴 spawn every <span id="v-redEvery"></span> turns</label>
-  <input type="range" id="s-redEvery" min="1" max="10" step="1">
-  <label>🔵 speed <span id="v-blueSpeed"></span></label>
-  <input type="range" id="s-blueSpeed" min="1" max="6" step="1">
-  <label>🔴 speed <span id="v-redSpeed"></span></label>
-  <input type="range" id="s-redSpeed" min="1" max="6" step="1">
+  <label>🔵 every <input type="number" id="n-blueEvery" min="1" max="10"> turns</label>
+  <label>🔴 every <input type="number" id="n-redEvery" min="1" max="10"> turns</label>
+  <label>🔵 speed <input type="number" id="n-blueSpeed" min="1" max="6"></label>
+  <label>🔴 speed <input type="number" id="n-redSpeed" min="1" max="6"></label>
+  <label>🧱 obstacles <input type="number" id="n-obs" min="0" max="100"></label>
 </div>
 
 <script>
@@ -76,16 +74,14 @@ function onState(m) {
   // sync smooth entities
   syncEnts(m);
   // tuning panel follows server cfg
-  if (m.cfg) for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed']) {
-    document.getElementById('s-' + k).value = m.cfg[k];
-    document.getElementById('v-' + k).textContent = m.cfg[k];
-  }
+  if (m.cfg) for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs'])
+    document.getElementById('n-' + k).value = m.cfg[k];
 }
 
-for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed'])
-  document.getElementById('s-' + k).addEventListener('input', e => {
-    document.getElementById('v-' + k).textContent = e.target.value;
-    if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'config', [k]: +e.target.value }));
+for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs'])
+  document.getElementById('n-' + k).addEventListener('change', e => {
+    if (e.target.value === '' || S.ws.readyState !== 1) return;
+    S.ws.send(JSON.stringify({ t: 'config', [k]: +e.target.value }));
   });
 
 function showDice(roll, mine) {

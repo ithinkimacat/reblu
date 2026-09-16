@@ -8,7 +8,7 @@ const { WebSocketServer } = require('ws');
 const SIZE = 25;
 const TURN_MS = 8000;      // move-phase window per player
 const DOT_STEP_MS = 150;   // animation pacing between dot cell-steps
-const OBS_COUNT = 10;
+const OBS_COUNT = 10;     // live-tunable via client panel (CFG.obs)
 const START = [0, 0];
 const FINISH = [24, 24];
 const PORT = process.env.PORT || 8000;
@@ -19,14 +19,23 @@ const manh = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const d6 = () => 1 + Math.floor(Math.random() * 6);
 
 // ---------- game state ----------
+// live-tunable settings; persisted across newGame() resets, edited from client panel
+const CFG = { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3, obs: OBS_COUNT };
 let G;
-function newGame(keepPlayers) {
+
+function buildObs(count, occupied = new Set()) {
   const obs = new Set();
-  while (obs.size < OBS_COUNT) {
+  while (obs.size < count) {
     const x = Math.floor(Math.random() * SIZE), y = Math.floor(Math.random() * SIZE);
-    if ((x === START[0] && y === START[1]) || (x === FINISH[0] && y === FINISH[1])) continue;
-    obs.add(key(x, y));
+    const k = key(x, y);
+    if (obs.has(k) || (x === START[0] && y === START[1]) || (x === FINISH[0] && y === FINISH[1]) || occupied.has(k)) continue;
+    obs.add(k);
   }
+  return obs;
+}
+
+function newGame(keepPlayers) {
+  const obs = buildObs(CFG.obs);
   G = {
     tick: 0,
     phase: 'idle',       // idle | move | dots | over
@@ -36,7 +45,7 @@ function newGame(keepPlayers) {
     blues: [],           // {id,x,y,boost}  boost 2=>speed 4 next, 1=>3, 0=>2
     reds: [],            // {id,x,y,px,py}
     lastBlasts: [],
-    cfg: { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3 }, // live-tunable via client panel
+    cfg: CFG,
     turnId: null,
     turnEndsAt: 0,
     nextDotId: 1,
@@ -349,14 +358,11 @@ function broadcast() {
   for (const ws of clients.keys()) if (ws.readyState === 1) ws.send(s);
 }
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 const srv = http.createServer((req, res) => {
-  const f = path.join(__dirname, 'public', req.url === '/' ? 'index.html' : req.url);
-  if (!f.startsWith(path.join(__dirname, 'public'))) { res.writeHead(403); return res.end(); }
-  fs.readFile(f, (err, data) => {
+  if (req.url !== '/') { res.writeHead(404); return res.end('nope'); }
+  fs.readFile(path.join(__dirname, 'index.html'), (err, data) => {
     if (err) { res.writeHead(404); return res.end('nope'); }
-    const MIMEt = MIME[path.extname(f)] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': MIMEt + (MIMEt.startsWith('text/') ? '; charset=utf-8' : '') });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(data);
   });
 });
@@ -376,6 +382,11 @@ wss.on('connection', ws => {
       const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0));
       for (const k of ['blueEvery', 'redEvery']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 10);
       for (const k of ['blueSpeed', 'redSpeed']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 6);
+      if (m.obs != null) {
+        G.cfg.obs = clamp(m.obs, 0, 100);
+        // rebuild immediately, steering clear of start/finish and everyone standing on the grid
+        G.obs = buildObs(G.cfg.obs, occupiedCells());
+      }
       broadcast();
     } else if (m.t === 'step') {
       tryStep(clients.get(ws), m.dx | 0, m.dy | 0);
