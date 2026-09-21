@@ -46,7 +46,7 @@ newGame();
   newGame();
   const g = G();
   g.obs.clear();
-  g.size = 25;
+  g.w = 25; g.h = 25;
   // red at (6,6): its blast zone covers x/y in [5..7]
   g.reds = [{ id: 1, x: 6, y: 6, px: 6, py: 6 }];
   g.blues = [{ id: 1, x: 5, y: 4, boost: 0 }];
@@ -65,7 +65,7 @@ newGame();
   mod.newGame();
   const g = mod.G;
   g.obs.clear();
-  g.size = 25;
+  g.w = 25; g.h = 25;
   // two blues; b1 boxed in by obstacles, red at origin must target b2
   g.blues = [{ id: 1, x: 10, y: 10, boost: 0 }, { id: 2, x: 5, y: 0, boost: 0 }];
   g.obs.add(key(9, 10)); g.obs.add(key(11, 10)); g.obs.add(key(10, 9)); g.obs.add(key(10, 11));

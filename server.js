@@ -12,19 +12,19 @@ const START = [0, 0];
 const PORT = process.env.PORT || 8000;
 
 const key = (x, y) => x + ',' + y;
-const fin = () => [G.size - 1, G.size - 1];
-const inGrid = (x, y) => x >= 0 && y >= 0 && x < G.size && y < G.size;
+const fin = () => [G.w - 1, G.h - 1];
+const inGrid = (x, y) => x >= 0 && y >= 0 && x < G.w && y < G.h;
 const d6 = () => 1 + Math.floor(Math.random() * 6);
 
 // ---------- game state ----------
 // live-tunable settings; persisted across newGame() resets, edited from client panel
-const CFG = { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3, obs: OBS_COUNT, blueCount: 1, size: 25 };
+const CFG = { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3, obs: OBS_COUNT, blueCount: 1, redCount: 1, sizeX: 25, sizeY: 25 };
 let G;
 
 function buildObs(count, occupied = new Set()) {
   const obs = new Set();
   while (obs.size < count) {
-    const x = Math.floor(Math.random() * G.size), y = Math.floor(Math.random() * G.size);
+    const x = Math.floor(Math.random() * G.w), y = Math.floor(Math.random() * G.h);
     const k = key(x, y);
     if (obs.has(k) || (x === START[0] && y === START[1]) || (x === fin()[0] && y === fin()[1]) || occupied.has(k)) continue;
     obs.add(k);
@@ -35,7 +35,8 @@ function buildObs(count, occupied = new Set()) {
 function newGame(keepPlayers) {
   G = {
     tick: 0,
-    size: CFG.size,
+    w: CFG.sizeX,
+    h: CFG.sizeY,
     phase: 'lobby',      // lobby | move | dots | over
     winner: null,
     obs: new Set(),
@@ -130,7 +131,7 @@ function redBlastZone() {
 
 function randomEmptyCell() {
   for (let tries = 0; tries < 200; tries++) {
-    const x = Math.floor(Math.random() * G.size), y = Math.floor(Math.random() * G.size);
+    const x = Math.floor(Math.random() * G.w), y = Math.floor(Math.random() * G.h);
     const k = key(x, y);
     if (G.obs.has(k)) continue;
     if ((x === START[0] && y === START[1]) || (x === fin()[0] && y === fin()[1])) continue;
@@ -325,8 +326,10 @@ function spawnPhase() {
     }
   }
   if (G.tick % G.cfg.redEvery === 0) {
-    const c = randomEmptyCell();
-    if (c) G.reds.push({ id: G.nextDotId++, x: c[0], y: c[1], px: c[0], py: c[1] });
+    for (let i = 0; i < G.cfg.redCount; i++) {
+      const c = randomEmptyCell();
+      if (c) G.reds.push({ id: G.nextDotId++, x: c[0], y: c[1], px: c[0], py: c[1] });
+    }
   }
 }
 
@@ -336,7 +339,7 @@ let turnTimer = null;
 
 // Begin pressed by everyone in the lobby: fresh board, first turn
 function startGame() {
-  G.size = CFG.size;
+  G.w = CFG.sizeX; G.h = CFG.sizeY;
   G.obs = buildObs(CFG.obs);
   G.blues = []; G.reds = []; G.lastBlasts = [];
   G.tick = 0; G.winner = null;
@@ -406,7 +409,7 @@ function snapshot() {
     obs: [...G.obs].map(k => k.split(',').map(Number)),
     blasts: G.lastBlasts,
     cfg: G.cfg,
-    size: G.size,
+    w: G.w, h: G.h,
     players: [...G.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
       roll: p.roll, used: p.used, dead: p.dead, wins: p.wins, rider: !!p.rider, ready: !!p.ready,
@@ -448,8 +451,10 @@ wss.on('connection', ws => {
       for (const k of ['blueEvery', 'redEvery']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 10);
       for (const k of ['blueSpeed', 'redSpeed']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 6);
       if (m.blueCount != null) G.cfg.blueCount = clamp(m.blueCount, 1, 5);
+      if (m.redCount != null) G.cfg.redCount = clamp(m.redCount, 1, 5);
       if (m.obs != null) G.cfg.obs = clamp(m.obs, 0, 100);
-      if (m.size != null) G.cfg.size = clamp(m.size, 15, 40);
+      if (m.sizeX != null) G.cfg.sizeX = clamp(m.sizeX, 15, 40);
+      if (m.sizeY != null) G.cfg.sizeY = clamp(m.sizeY, 15, 40);
       broadcast();
     } else if (m.t === 'begin') {
       const p = G.players.get(clients.get(ws));

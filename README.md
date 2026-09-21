@@ -14,11 +14,10 @@ Every browser that opens the page joins the same game. Test multiplayer by openi
 ## Play
 
 - Move: **WASD** / **arrow keys** / **Xbox gamepad** (dpad or left stick; **B** clears queue)
-- Each tick (~1.8s) you roll a D6 — queue up to that many orthogonal steps before the timer ends. Movement applies when the tick fires.
+- Each turn you roll a D6 — spend that many orthogonal steps before the timer ends.
 - Step on a dot: safe passage. **End your move on a dot to ride it.** End on a dot occupied by another player to **push** them 2 cells.
-- 🔵 Blue dots crawl toward the finish (2 cells/tick, faster briefly after merging).
-- 🔴 Red dots hunt the nearest blue (3 cells/tick). Red + Blue = 💥 blast (3x3 plus a 2-cell tail). Blasts kill — you respawn at start.
-- First to reach the 🏁 opposite corner wins.
+- Blue dots head for the finish. Red dots hunt the nearest reachable blue. Red + Blue = blast (3x3 plus a 2-cell tail). Blasts kill — you respawn near the start.
+- Everyone waits in the lobby, tweaks settings, presses Ready; the game starts when all are ready. First to the goal corner wins.
 
 ## Deploy (students over the internet)
 

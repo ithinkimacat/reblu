@@ -4,7 +4,7 @@
   :root { --bg:#0e1116; --fg:#e6e6e6; --mut:#8b98a5; }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px; }
   #hud { display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; }
-  #c { background:#161b22; border-radius:8px; max-width:min(92vmin,640px); touch-action:none; box-shadow:0 8px 32px #0008; }
+  #c { background:#161b22; border-radius:8px; max-width:min(92vmin,640px); max-height:min(92vmin,640px); touch-action:none; box-shadow:0 8px 32px #0008; }
   .mut { color:var(--mut); } b { font-size:18px; }
   kbd { background:#222a33; border-radius:4px; padding:1px 5px; }
   #banner { font-size:20px; font-weight:700; min-height:26px; transition:opacity .2s; }
@@ -15,10 +15,16 @@
   @keyframes dicepop { 0%{transform:scale(.3) rotate(-30deg);opacity:0} 25%{opacity:1} 60%{transform:scale(1.1) rotate(6deg);opacity:1} 100%{transform:scale(1) rotate(0);opacity:0} }
   #overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:#000a; font-size:36px; font-weight:800; z-index:10; animation:winpop .4s ease-out; }
   @keyframes winpop { from{transform:scale(.8);opacity:0} to{transform:scale(1);opacity:1} }
-  #panel { display:flex; flex-direction:column; gap:6px; width:220px; }
-  #panel h3 { grid-column:1 / -1; margin:0; font-size:13px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; }
-  #panel label { font-size:13px; color:var(--mut); display:flex; justify-content:space-between; gap:8px; }
-  #panel input[type=number] { width:52px; background:#0e1116; color:var(--fg); border:1px solid #30363d; border-radius:4px; padding:2px 4px; font:inherit; }
+  #panel { display:flex; flex-direction:column; gap:6px; width:230px; }
+  #panel h3 { margin:6px 0 0; font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; border-bottom:1px solid #30363d; padding-bottom:3px; }
+  #panel h3:first-child { margin-top:0; }
+  #panel label { font-size:13px; color:var(--fg); display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  #panel .step { display:inline-flex; align-items:center; gap:3px; }
+  #panel .step button { width:22px; height:24px; background:#222a33; color:var(--fg); border:1px solid #30363d; border-radius:4px; cursor:pointer; font:inherit; line-height:1; }
+  #panel .step button:hover { background:#2d3742; }
+  #panel input[type=number] { width:46px; background:#0e1116; color:var(--fg); border:1px solid #30363d; border-radius:4px; padding:2px 2px; font:inherit; text-align:center; -moz-appearance:textfield; }
+  #panel input::-webkit-outer-spin-button, #panel input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:baseline; }
   #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000a; z-index:9; }
   #lobby[hidden] { display:none; }
   #lobbybox { background:#161b22; border-radius:10px; padding:18px 22px; min-width:240px; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px #000a; }
@@ -41,16 +47,7 @@
   <div id="lobbybox">
     <h2>Lobby</h2>
     <div id="plist"></div>
-    <div id="panel">
-      <h3>Settings</h3>
-      <label>Blue every <input type="number" id="n-blueEvery" min="1" max="10"> turns</label>
-      <label>Red every <input type="number" id="n-redEvery" min="1" max="10"> turns</label>
-      <label>Blue speed <input type="number" id="n-blueSpeed" min="1" max="6"></label>
-      <label>Red speed <input type="number" id="n-redSpeed" min="1" max="6"></label>
-      <label>Obstacles <input type="number" id="n-obs" min="0" max="100"></label>
-      <label>Blue count <input type="number" id="n-blueCount" min="1" max="5"></label>
-      <label>Board size <input type="number" id="n-size" min="15" max="40"></label>
-    </div>
+    <div id="panel"></div>
     <button id="begin">BEGIN</button>
     <div class="mut" id="lobbyhint"></div>
   </div>
@@ -93,15 +90,59 @@ function onState(m) {
   // sync smooth entities
   syncEnts(m);
   // tuning panel follows server cfg
-  if (m.cfg) for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs','blueCount','size'])
-    document.getElementById('n-' + k).value = m.cfg[k];
+  if (m.cfg) syncPanel(m.cfg);
 }
 
-for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs','blueCount','size'])
-  document.getElementById('n-' + k).addEventListener('change', e => {
-    if (e.target.value === '' || S.ws.readyState !== 1) return;
-    S.ws.send(JSON.stringify({ t: 'config', [k]: +e.target.value }));
-  });
+// ---- settings panel (lobby): categories, -/+ steppers, typeable values ----
+const FIELDS = [
+  { cat: 'Blue dots' },
+  { k: 'blueEvery', label: 'Spawn every', suffix: 'turns', min: 1, max: 10 },
+  { k: 'blueSpeed', label: 'Base speed', min: 1, max: 6 },
+  { k: 'blueCount', label: 'Spawn count', min: 1, max: 5 },
+  { k: 'blueCombined', label: 'Combined speed', display: true },
+  { cat: 'Red dots' },
+  { k: 'redEvery', label: 'Spawn every', suffix: 'turns', min: 1, max: 10 },
+  { k: 'redSpeed', label: 'Base speed', min: 1, max: 6 },
+  { k: 'redCount', label: 'Spawn count', min: 1, max: 5 },
+  { k: 'redCombined', label: 'Combined speed', display: true },
+  { cat: 'Board' },
+  { k: 'sizeX', label: 'Width', suffix: 'cells', min: 15, max: 40 },
+  { k: 'sizeY', label: 'Height', suffix: 'cells', min: 15, max: 40 },
+  { k: 'obs', label: 'Obstacles', min: 0, max: 100 },
+];
+const IN = {};
+{
+  const panel = document.getElementById('panel');
+  for (const f of FIELDS) {
+    if (f.cat) { const h = document.createElement('h3'); h.textContent = f.cat; panel.appendChild(h); continue; }
+    const lb = document.createElement('label');
+    const name = document.createElement('span'); name.textContent = f.label; lb.appendChild(name);
+    if (f.display) {
+      const s = document.createElement('span'); s.className = 'mut'; IN[f.k] = s; lb.appendChild(s);
+    } else {
+      const wrap = document.createElement('span'); wrap.className = 'step';
+      const minus = document.createElement('button'); minus.type = 'button'; minus.textContent = '-';
+      const input = document.createElement('input'); input.type = 'number'; input.min = f.min; input.max = f.max;
+      const plus = document.createElement('button'); plus.type = 'button'; plus.textContent = '+';
+      wrap.append(minus, input, plus); lb.appendChild(wrap);
+      if (f.suffix) lb.appendChild(Object.assign(document.createElement('span'), { textContent: f.suffix, className: 'mut' }));
+      IN[f.k] = input;
+      const send = v => {
+        v = Math.max(f.min, Math.min(f.max, v | 0));
+        if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'config', [f.k]: v }));
+      };
+      minus.addEventListener('click', () => send((+input.value || f.min) - 1));
+      plus.addEventListener('click', () => send((+input.value || f.min) + 1));
+      input.addEventListener('change', () => { if (input.value !== '') send(+input.value); });
+    }
+  }
+}
+
+function syncPanel(cfg) {
+  for (const f of FIELDS) if (f.k && !f.display) IN[f.k].value = cfg[f.k];
+  IN.blueCombined.textContent = (cfg.blueSpeed + 2) + ' (merged)';
+  IN.redCombined.textContent = cfg.redSpeed + ' (no boost)';
+}
 
 document.getElementById('begin').addEventListener('click', () => {
   if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'begin' }));
@@ -169,15 +210,17 @@ let padPrev = {};
 function draw(now) {
   const size = Math.min(innerWidth, innerHeight) * 0.9;
   const clamped = Math.min(size, 640);
-  cvs.width = cvs.height = clamped;
   const st = S.st;
-  const n = (st && st.size) || 25;
-  const cell = clamped / n;
-  ctx.clearRect(0, 0, clamped, clamped);
+  const w = (st && st.w) || 25, h = (st && st.h) || 25;
+  const cell = clamped / Math.max(w, h);
+  cvs.width = Math.round(w * cell); cvs.height = Math.round(h * cell);
+  ctx.clearRect(0, 0, cvs.width, cvs.height);
   ctx.strokeStyle = '#21262d';
-  for (let i = 0; i <= n; i++) {
-    ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,clamped); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(clamped,i*cell); ctx.stroke();
+  for (let i = 0; i <= w; i++) {
+    ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,cvs.height); ctx.stroke();
+  }
+  for (let i = 0; i <= h; i++) {
+    ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(cvs.width,i*cell); ctx.stroke();
   }
   if (!st) { requestAnimationFrame(draw); return; }
 
@@ -193,9 +236,9 @@ function draw(now) {
   // start / finish
   ctx.fillStyle = '#2ea043'; ctx.fillRect(0, 0, cell, cell);
   const pulse = 0.75 + 0.25 * Math.sin(now / 300);
-  ctx.fillStyle = `rgba(255,213,79,${pulse})`; ctx.fillRect((n-1)*cell, (n-1)*cell, cell, cell);
+  ctx.fillStyle = `rgba(255,213,79,${pulse})`; ctx.fillRect((w-1)*cell, (h-1)*cell, cell, cell);
   ctx.font = `bold ${cell*0.32}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#6b5b00'; ctx.fillText('GOAL', ...at(n-1, n-1));
+  ctx.fillStyle = '#6b5b00'; ctx.fillText('GOAL', ...at(w-1, h-1));
 
   // obstacles
   ctx.fillStyle = '#3a3f45';
@@ -266,13 +309,13 @@ function draw(now) {
   if (st.phase === 'lobby') {
     lb.hidden = false;
     document.getElementById('plist').innerHTML =
-      st.players.map(p => `<span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''} — ${p.ready ? 'ready' : 'waiting'}`).join('<br>');
+      st.players.map(p => `<span class="sw" style="background:${p.color}"></span><span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''} — ${p.ready ? 'ready' : 'waiting'}`).join('<br>');
     const iReady = me && me.ready;
     const b = document.getElementById('begin');
-    b.disabled = !iReady;
-    b.textContent = iReady ? 'waiting for others...' : 'BEGIN';
+    b.disabled = !me; // clickable until you declare ready
+    b.textContent = iReady ? 'waiting for others...' : 'READY';
     document.getElementById('lobbyhint').textContent =
-      st.players.filter(p => p.ready).length + ' / ' + st.players.length + ' ready — game starts when all press Begin';
+      st.players.filter(p => p.ready).length + ' / ' + st.players.length + ' ready — game starts when all press Ready';
     banner.textContent = 'lobby — press Begin when ready'; banner.style.color = '#8b98a5';
     document.getElementById('timerfill').style.width = '0%';
   } else lb.hidden = true;
