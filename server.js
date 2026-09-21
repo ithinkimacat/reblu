@@ -5,43 +5,42 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
-const SIZE = 25;
 const TURN_MS = 8000;      // move-phase window per player
 const DOT_STEP_MS = 150;   // animation pacing between dot cell-steps
 const OBS_COUNT = 10;     // live-tunable via client panel (CFG.obs)
 const START = [0, 0];
-const FINISH = [24, 24];
 const PORT = process.env.PORT || 8000;
 
 const key = (x, y) => x + ',' + y;
-const inGrid = (x, y) => x >= 0 && y >= 0 && x < SIZE && y < SIZE;
+const fin = () => [G.size - 1, G.size - 1];
+const inGrid = (x, y) => x >= 0 && y >= 0 && x < G.size && y < G.size;
 const manh = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const d6 = () => 1 + Math.floor(Math.random() * 6);
 
 // ---------- game state ----------
 // live-tunable settings; persisted across newGame() resets, edited from client panel
-const CFG = { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3, obs: OBS_COUNT };
+const CFG = { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3, obs: OBS_COUNT, blueCount: 1, size: 25 };
 let G;
 
 function buildObs(count, occupied = new Set()) {
   const obs = new Set();
   while (obs.size < count) {
-    const x = Math.floor(Math.random() * SIZE), y = Math.floor(Math.random() * SIZE);
+    const x = Math.floor(Math.random() * G.size), y = Math.floor(Math.random() * G.size);
     const k = key(x, y);
-    if (obs.has(k) || (x === START[0] && y === START[1]) || (x === FINISH[0] && y === FINISH[1]) || occupied.has(k)) continue;
+    if (obs.has(k) || (x === START[0] && y === START[1]) || (x === fin()[0] && y === fin()[1]) || occupied.has(k)) continue;
     obs.add(k);
   }
   return obs;
 }
 
 function newGame(keepPlayers) {
-  const obs = buildObs(CFG.obs);
   G = {
     tick: 0,
-    phase: 'idle',       // idle | move | dots | over
+    size: CFG.size,
+    phase: 'lobby',      // lobby | move | dots | over
     winner: null,
-    obs,
-    players: new Map(),  // id -> {id,name,color,x,y,roll,used,lastDir,rider,dead,wins}
+    obs: new Set(),
+    players: new Map(),  // id -> {id,name,color,x,y,roll,used,lastDir,rider,dead,wins,ready}
     blues: [],           // {id,x,y,boost}  boost 2=>speed 4 next, 1=>3, 0=>2
     reds: [],            // {id,x,y,px,py}
     lastBlasts: [],
@@ -50,7 +49,7 @@ function newGame(keepPlayers) {
     turnEndsAt: 0,
     nextDotId: 1,
   };
-  if (keepPlayers) for (const p of keepPlayers) G.players.set(p.id, p);
+  if (keepPlayers) for (const p of keepPlayers) { G.players.set(p.id, p); p.ready = false; }
   respawnAll();
 }
 
@@ -88,7 +87,7 @@ function respawnPlayer(p) {
 function addPlayer(id, name) {
   const colors = ['#ffd54f','#4dd0e1','#aed581','#f48fb1','#ce93d8','#ffab91','#90a4ae','#fff176'];
   const p = { id, name: (name || 'anon').slice(0, 16), color: colors[id % colors.length],
-    x: 0, y: 0, roll: 0, used: 0, lastDir: null, rider: null, dead: false, wins: 0 };
+    x: 0, y: 0, roll: 0, used: 0, lastDir: null, rider: null, dead: false, wins: 0, ready: false };
   G.players.set(id, p);
   const [x, y] = spawnCells(1, occupiedCells())[0];
   p.x = x; p.y = y;
@@ -120,10 +119,10 @@ function bfsPath(sx, sy, tx, ty, maxSteps) {
 
 function randomEmptyCell() {
   for (let tries = 0; tries < 200; tries++) {
-    const x = Math.floor(Math.random() * SIZE), y = Math.floor(Math.random() * SIZE);
+    const x = Math.floor(Math.random() * G.size), y = Math.floor(Math.random() * G.size);
     const k = key(x, y);
     if (G.obs.has(k)) continue;
-    if ((x === START[0] && y === START[1]) || (x === FINISH[0] && y === FINISH[1])) continue;
+    if ((x === START[0] && y === START[1]) || (x === fin()[0] && y === fin()[1])) continue;
     if ([...G.players.values()].some(p => !p.dead && p.x === x && p.y === y)) continue;
     if (G.blues.some(b => b.x === x && b.y === y) || G.reds.some(r => r.x === x && r.y === y)) continue;
     return [x, y];
@@ -147,7 +146,7 @@ function moveRiders(dot, ref) {
 
 // anyone standing on the finish (own steps, pushed, or riding a dot) wins
 function checkWin() {
-  const p = [...G.players.values()].find(q => !q.dead && q.x === FINISH[0] && q.y === FINISH[1]);
+  const p = [...G.players.values()].find(q => !q.dead && q.x === fin()[0] && q.y === fin()[1]);
   if (!p) return false;
   p.wins++; G.phase = 'over'; G.winner = p.name; G.turnId = null;
   clearTimeout(turnTimer);
@@ -198,7 +197,7 @@ function animateDotMoves(movers, done) {
 function bluePhase(done) {
   const movers = G.blues.map(b => ({
     dot: b, ref: 'b' + b.id,
-    path: bfsPath(b.x, b.y, FINISH[0], FINISH[1], G.cfg.blueSpeed + b.boost),
+    path: bfsPath(b.x, b.y, fin()[0], fin()[1], G.cfg.blueSpeed + b.boost),
   }));
   for (const b of G.blues) if (b.boost > 0) b.boost--;
   animateDotMoves(movers, () => {
@@ -282,8 +281,10 @@ function blastPhase() {
 // spawns: every cfg.blueEvery / cfg.redEvery ticks (= player turns)
 function spawnPhase() {
   if (G.tick % G.cfg.blueEvery === 0) {
-    const c = randomEmptyCell();
-    if (c) G.blues.push({ id: G.nextDotId++, x: c[0], y: c[1], boost: 0 });
+    for (let i = 0; i < G.cfg.blueCount; i++) {
+      const c = randomEmptyCell();
+      if (c) G.blues.push({ id: G.nextDotId++, x: c[0], y: c[1], boost: 0 });
+    }
   }
   if (G.tick % G.cfg.redEvery === 0) {
     const c = randomEmptyCell();
@@ -295,10 +296,24 @@ function spawnPhase() {
 let turnIdx = 0;
 let turnTimer = null;
 
+// Begin pressed by everyone in the lobby: fresh board, first turn
+function startGame() {
+  G.size = CFG.size;
+  G.obs = buildObs(CFG.obs);
+  G.blues = []; G.reds = []; G.lastBlasts = [];
+  G.tick = 0; G.winner = null;
+  respawnAll();
+  G.phase = 'move';
+  turnLoop();
+}
+
 function turnLoop() {
-  if (G.phase === 'over') {
+  if (G.phase === 'over') { broadcast(); return; } // checkWin owns the restart timer
+  if (G.phase === 'lobby') {
     broadcast();
-    return void setTimeout(() => { newGame([...G.players.values()]); turnLoop(); }, 3000);
+    const ps = [...G.players.values()];
+    if (ps.length && ps.every(p => p.ready)) return startGame();
+    return void setTimeout(turnLoop, 500);
   }
   const ps = [...G.players.values()];
   if (!ps.length) { broadcast(); return void setTimeout(turnLoop, 1000); }
@@ -353,9 +368,10 @@ function snapshot() {
     obs: [...G.obs].map(k => k.split(',').map(Number)),
     blasts: G.lastBlasts,
     cfg: G.cfg,
+    size: G.size,
     players: [...G.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
-      roll: p.roll, used: p.used, dead: p.dead, wins: p.wins, rider: !!p.rider,
+      roll: p.roll, used: p.used, dead: p.dead, wins: p.wins, rider: !!p.rider, ready: !!p.ready,
     })),
     blues: G.blues.map(b => ({ id: b.id, x: b.x, y: b.y, boost: b.boost })),
     reds: G.reds.map(r => ({ id: r.id, x: r.x, y: r.y })),
@@ -389,15 +405,17 @@ wss.on('connection', ws => {
       ws.send(JSON.stringify({ t: 'welcome', id }));
       broadcast();
     } else if (m.t === 'config') {
+      if (G.phase !== 'lobby') return; // settings are a lobby activity
       const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0));
       for (const k of ['blueEvery', 'redEvery']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 10);
       for (const k of ['blueSpeed', 'redSpeed']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 6);
-      if (m.obs != null) {
-        G.cfg.obs = clamp(m.obs, 0, 100);
-        // rebuild immediately, steering clear of start/finish and everyone standing on the grid
-        G.obs = buildObs(G.cfg.obs, occupiedCells());
-      }
+      if (m.blueCount != null) G.cfg.blueCount = clamp(m.blueCount, 1, 5);
+      if (m.obs != null) G.cfg.obs = clamp(m.obs, 0, 100);
+      if (m.size != null) G.cfg.size = clamp(m.size, 15, 40);
       broadcast();
+    } else if (m.t === 'begin') {
+      const p = G.players.get(clients.get(ws));
+      if (p && G.phase === 'lobby') { p.ready = true; broadcast(); }
     } else if (m.t === 'step') {
       tryStep(clients.get(ws), m.dx | 0, m.dy | 0);
     } else if (m.t === 'done') {

@@ -20,6 +20,13 @@
   #panel label { font-size:12px; color:var(--mut); display:flex; justify-content:space-between; }
   #panel input[type=number] { width:52px; background:#0e1116; color:var(--fg); border:1px solid #30363d; border-radius:4px; padding:2px 4px; font:inherit; }
   #panel label input { margin-left:auto; }
+  #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000a; z-index:9; }
+  #lobby[hidden] { display:none; }
+  #lobbybox { background:#161b22; border-radius:10px; padding:18px 22px; min-width:240px; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px #000a; }
+  #lobbybox h2 { margin:0; }
+  #plist { display:flex; flex-direction:column; gap:4px; font-size:15px; }
+  #begin { font:inherit; font-weight:800; font-size:18px; padding:10px 0; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
+  #begin:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
 </style>
 
 <div id="hud">
@@ -38,6 +45,17 @@
   <label>🔵 speed <input type="number" id="n-blueSpeed" min="1" max="6"></label>
   <label>🔴 speed <input type="number" id="n-redSpeed" min="1" max="6"></label>
   <label>🧱 obstacles <input type="number" id="n-obs" min="0" max="100"></label>
+  <label>🔵 count <input type="number" id="n-blueCount" min="1" max="5"></label>
+  <label>📐 size <input type="number" id="n-size" min="15" max="40"></label>
+  <div class="mut" style="font-size:11px">lobby only</div>
+</div>
+<div id="lobby" hidden>
+  <div id="lobbybox">
+    <h2>Lobby</h2>
+    <div id="plist"></div>
+    <button id="begin">▶ BEGIN</button>
+    <div class="mut" id="lobbyhint"></div>
+  </div>
 </div>
 
 <script>
@@ -77,15 +95,19 @@ function onState(m) {
   // sync smooth entities
   syncEnts(m);
   // tuning panel follows server cfg
-  if (m.cfg) for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs'])
+  if (m.cfg) for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs','blueCount','size'])
     document.getElementById('n-' + k).value = m.cfg[k];
 }
 
-for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs'])
+for (const k of ['blueEvery','redEvery','blueSpeed','redSpeed','obs','blueCount','size'])
   document.getElementById('n-' + k).addEventListener('change', e => {
     if (e.target.value === '' || S.ws.readyState !== 1) return;
     S.ws.send(JSON.stringify({ t: 'config', [k]: +e.target.value }));
   });
+
+document.getElementById('begin').addEventListener('click', () => {
+  if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'begin' }));
+});
 
 function showDice(roll, mine) {
   const el = document.getElementById('dice');
@@ -150,14 +172,15 @@ function draw(now) {
   const size = Math.min(innerWidth, innerHeight) * 0.9;
   const clamped = Math.min(size, 640);
   cvs.width = cvs.height = clamped;
-  const cell = clamped / 25;
+  const st = S.st;
+  const n = (st && st.size) || 25;
+  const cell = clamped / n;
   ctx.clearRect(0, 0, clamped, clamped);
   ctx.strokeStyle = '#21262d';
-  for (let i = 0; i <= 25; i++) {
+  for (let i = 0; i <= n; i++) {
     ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,clamped); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(clamped,i*cell); ctx.stroke();
   }
-  const st = S.st;
   if (!st) { requestAnimationFrame(draw); return; }
 
   // advance lerp toward targets (critically-damped-ish, frame-rate friendly)
@@ -172,9 +195,9 @@ function draw(now) {
   // start / finish
   ctx.fillStyle = '#2ea043'; ctx.fillRect(0, 0, cell, cell);
   const pulse = 0.75 + 0.25 * Math.sin(now / 300);
-  ctx.fillStyle = `rgba(255,213,79,${pulse})`; ctx.fillRect(24*cell, 24*cell, cell, cell);
+  ctx.fillStyle = `rgba(255,213,79,${pulse})`; ctx.fillRect((n-1)*cell, (n-1)*cell, cell, cell);
   ctx.font = `${cell*0.7}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('🏁', ...at(24, 24));
+  ctx.fillText('🏁', ...at(n-1, n-1));
 
   // obstacles
   ctx.fillStyle = '#3a3f45';
@@ -240,6 +263,21 @@ function draw(now) {
   // hud: banner + timer
   const me = st.players.find(p => p.id === S.me);
   const banner = document.getElementById('banner');
+  // lobby: player list + Begin gate
+  const lb = document.getElementById('lobby');
+  if (st.phase === 'lobby') {
+    lb.hidden = false;
+    document.getElementById('plist').innerHTML =
+      st.players.map(p => `${p.ready ? '✅' : '⬜'} <span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''}`).join('<br>');
+    const iReady = me && me.ready;
+    const b = document.getElementById('begin');
+    b.disabled = !iReady;
+    b.textContent = iReady ? '⏳ waiting for others…' : '▶ BEGIN';
+    document.getElementById('lobbyhint').textContent =
+      st.players.filter(p => p.ready).length + '/' + st.players.length + ' ready — tweak settings on the right';
+    banner.textContent = 'lobby — press Begin when ready'; banner.style.color = '#8b98a5';
+    document.getElementById('timerfill').style.width = '0%';
+  } else lb.hidden = true;
   if (st.phase === 'move' && st.turnId) {
     const tp = st.players.find(p => p.id === st.turnId);
     const left = Math.max(0, S.turnMsAtRecv - (now - S.lastStateAt));
