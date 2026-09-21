@@ -103,7 +103,8 @@ function bfsPath(sx, sy, tx, ty, maxSteps) {
   let found = null;
   while (q.length) {
     const [x, y] = q.shift();
-    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    // down/right first: paths read as heading diagonally toward the bottom-right finish
+    for (const [dx, dy] of [[0,1],[1,0],[0,-1],[-1,0]]) {
       const nx = x + dx, ny = y + dy, k = key(nx, ny);
       if (!inGrid(nx, ny) || G.obs.has(k) || prev.has(k)) continue;
       prev.set(k, key(x, y));
@@ -142,6 +143,17 @@ const clearRiders = ref => { for (const p of G.players.values()) if (p.rider ===
 
 function moveRiders(dot, ref) {
   for (const p of G.players.values()) if (p.rider === ref && !p.dead) { p.x = dot.x; p.y = dot.y; }
+}
+
+// anyone standing on the finish (own steps, pushed, or riding a dot) wins
+function checkWin() {
+  const p = [...G.players.values()].find(q => !q.dead && q.x === FINISH[0] && q.y === FINISH[1]);
+  if (!p) return false;
+  p.wins++; G.phase = 'over'; G.winner = p.name; G.turnId = null;
+  clearTimeout(turnTimer);
+  broadcast();
+  setTimeout(() => { newGame([...G.players.values()]); turnLoop(); }, 3500);
+  return true;
 }
 
 // called when the active player's move window ends: pushing, then riding
@@ -203,6 +215,7 @@ function bluePhase(done) {
       }
     }
     broadcast();
+    if (checkWin()) return;
     done();
   });
 }
@@ -304,8 +317,10 @@ function endMove(id) {
   if (G.phase !== 'move' || G.turnId !== id) return;
   clearTimeout(turnTimer);
   const p = G.players.get(id);
-  if (p && !p.dead) evalLanding(p);
-  if (G.phase === 'over') return turnLoop(); // win during eval is impossible, but stay safe
+  if (p && !p.dead) {
+    evalLanding(p);
+    if (checkWin()) return; // pushed onto the finish still counts
+  }
   bluePhase(() => redPhase(() => {
     blastPhase();
     spawnPhase();
@@ -324,12 +339,7 @@ function tryStep(id, dx, dy) {
   if (!inGrid(nx, ny) || G.obs.has(key(nx, ny))) return;
   if ([...G.players.values()].some(q => q !== p && !q.dead && q.x === nx && q.y === ny)) return;
   p.x = nx; p.y = ny; p.used++; p.lastDir = { dx, dy };
-  if (p.x === FINISH[0] && p.y === FINISH[1]) {
-    p.wins++; G.phase = 'over'; G.winner = p.name; G.turnId = null;
-    clearTimeout(turnTimer);
-    broadcast();
-    return void setTimeout(() => { newGame([...G.players.values()]); turnLoop(); }, 3500);
-  }
+  if (checkWin()) return;
   broadcast();
   if (p.used >= p.roll) setTimeout(() => endMove(id), 500); // spent all steps: short beat, then dots go
 }
