@@ -9,7 +9,7 @@ npm i
 npm start        # http://localhost:8000
 ```
 
-Every browser that opens the page joins the same game. Test multiplayer by opening extra tabs (add `?name=yourname` to skip the prompt).
+Every browser that opens the page joins the same game. Test multiplayer by opening extra tabs (add `?name=abcd` to skip the callsign entry).
 
 ## Play
 

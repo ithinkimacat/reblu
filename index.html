@@ -27,6 +27,18 @@
   .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:baseline; }
   #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000a; z-index:9; }
   #lobby[hidden] { display:none; }
+  #nameentry { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--bg); z-index:20; flex-direction:column; gap:18px; }
+  #nameentry[hidden] { display:none; }
+  #nameentry h1 { font-size:44px; margin:0; letter-spacing:.06em; }
+  #nameentry h1 em { font-style:normal; color:#f85149; }
+  #nameentry .sub { color:var(--mut); }
+  #necells { display:flex; gap:10px; }
+  #necells .ne { width:58px; height:68px; background:#161b22; border:2px solid #30363d; border-radius:10px; color:var(--fg); font:700 34px system-ui,sans-serif; text-align:center; text-transform:uppercase; caret-color:#58a6ff; }
+  #necells .ne:focus { outline:none; border-color:#58a6ff; box-shadow:0 0 0 3px #58a6ff33; }
+  #necells .ne.pop { animation:nepop .18s ease-out; }
+  @keyframes nepop { from { transform:scale(.7); } to { transform:scale(1); } }
+  #join { font:inherit; font-weight:800; font-size:18px; padding:10px 42px; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
+  #join:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
   #lobbybox { background:#161b22; border-radius:10px; padding:18px 22px; min-width:240px; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px #000a; }
   #lobbybox h2 { margin:0; }
   #plist { display:flex; flex-direction:column; gap:4px; font-size:15px; }
@@ -45,6 +57,18 @@
 <div id="score" class="mut"></div>
 <div id="dice"></div>
 <div id="overlay"></div>
+<div id="nameentry">
+  <h1>reb<em>lu</em></h1>
+  <div class="sub">pick your callsign — 4 letters or digits</div>
+  <div id="necells">
+    <input class="ne" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <input class="ne" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <input class="ne" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <input class="ne" maxlength="1" autocomplete="off" autocapitalize="characters" spellcheck="false">
+  </div>
+  <button id="join" disabled>JOIN</button>
+  <div class="sub" id="nehint"></div>
+</div>
 <div id="lobby" hidden>
   <div id="lobbybox">
     <h2>Lobby</h2>
@@ -59,10 +83,51 @@
 const S = { me: null, st: null, ws: null, lastStateAt: 0, turnMsAtRecv: 0, lastTurnKey: '', ents: new Map(), blastFx: [] };
 const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
 
-const name = new URL(location.href).searchParams.get('name') || prompt('Your name? (letters/numbers, max 4)') || 'anon';
-
 // same-origin WS by default; hosted statically (e.g. GitHub Pages), point at the game server: ?srv=https://reblu.onrender.com
 const SRV = new URL(location.href).searchParams.get('srv') || location.origin;
+
+let name = null;
+
+// ---- callsign entry: four single-char cells, impossible to exceed 4 chars ----
+function nameEntryUI() {
+  const ne = document.getElementById('nameentry');
+  ne.hidden = false;
+  const cells = [...document.querySelectorAll('.ne')];
+  const btn = document.getElementById('join');
+  const hint = document.getElementById('nehint');
+  const val = () => cells.map(c => c.value).join('');
+  const refresh = () => { btn.disabled = !val(); hint.textContent = val() ? 'joining as ' + val() : ''; };
+  const join = () => {
+    if (!val()) return;
+    btn.disabled = true;
+    ne.hidden = true;
+    name = val();
+    connect();
+  };
+  cells.forEach((c, i) => {
+    c.addEventListener('input', () => {
+      c.value = c.value.replace(/[^a-zA-Z0-9]/g, '').slice(-1).toUpperCase();
+      c.classList.remove('pop'); void c.offsetWidth; if (c.value) c.classList.add('pop');
+      if (c.value && i < 3) cells[i + 1].focus();
+      refresh();
+    });
+    c.addEventListener('keydown', e => {
+      if (e.key === 'Backspace' && !c.value && i > 0) { cells[i - 1].value = ''; cells[i - 1].focus(); refresh(); }
+      else if (e.key === 'Enter' && val()) join();
+      else if (e.key === 'ArrowLeft' && i > 0) cells[i - 1].focus();
+      else if (e.key === 'ArrowRight' && i < 3) cells[i + 1].focus();
+    });
+    c.addEventListener('paste', e => {
+      e.preventDefault();
+      const text = (e.clipboardData.getData('text') || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+      [...text].forEach((ch, j) => { if (cells[j]) cells[j].value = ch; });
+      cells[Math.min(text.length, 3)].focus();
+      refresh();
+    });
+  });
+  btn.addEventListener('click', join);
+  cells[0].focus();
+}
 
 function connect() {
   const ws = new WebSocket(SRV.replace(/^http/, 'ws'));
@@ -75,7 +140,10 @@ function connect() {
   };
   ws.onclose = () => setTimeout(connect, 1500);
 }
-connect();
+
+// ?name=abcd skips the entry screen; otherwise four-cell callsign UI
+if (new URL(location.href).searchParams.get('name')) name = new URL(location.href).searchParams.get('name');
+if (name) connect(); else nameEntryUI();
 
 function onState(m) {
   // new turn -> dice pop
