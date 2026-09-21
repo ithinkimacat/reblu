@@ -129,10 +129,17 @@ function nameEntryUI() {
   cells[0].focus();
 }
 
+// messages sent while the socket is connecting (Render cold start) get queued, not dropped
+const outbox = [];
+function send(o) {
+  if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(o));
+  else outbox.push(o);
+}
+
 function connect() {
   const ws = new WebSocket(SRV.replace(/^http/, 'ws'));
   S.ws = ws;
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name }));
+  ws.onopen = () => { ws.send(JSON.stringify({ t: 'join', name })); while (outbox.length) ws.send(JSON.stringify(outbox.shift())); };
   ws.onmessage = e => {
     const m = JSON.parse(e.data);
     if (m.t === 'welcome') S.me = m.id;
@@ -200,13 +207,13 @@ const IN = {};
       wrap.append(minus, input, plus); lb.appendChild(wrap);
       if (f.suffix) lb.appendChild(Object.assign(document.createElement('span'), { textContent: f.suffix, className: 'mut' }));
       IN[f.k] = input;
-      const send = v => {
+      const sendCfg = v => {
         v = Math.max(f.min, Math.min(f.max, v | 0));
-        if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'config', [f.k]: v }));
+        send({ t: 'config', [f.k]: v });
       };
-      minus.addEventListener('click', () => send((+input.value || f.min) - 1));
-      plus.addEventListener('click', () => send((+input.value || f.min) + 1));
-      input.addEventListener('change', () => { if (input.value !== '') send(+input.value); });
+      minus.addEventListener('click', () => sendCfg((+input.value || f.min) - 1));
+      plus.addEventListener('click', () => sendCfg((+input.value || f.min) + 1));
+      input.addEventListener('change', () => { if (input.value !== '') sendCfg(+input.value); });
     }
     panel.appendChild(lb);
   }
@@ -219,7 +226,7 @@ function syncPanel(cfg) {
 }
 
 document.getElementById('begin').addEventListener('click', () => {
-  if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'begin' }));
+  send({ t: 'begin' });
 });
 
 function showDice(roll, mine) {
@@ -249,9 +256,9 @@ function step(dx, dy) {
   if (!myTurn()) return;
   const me = S.st.players.find(p => p.id === S.me);
   if (!me || me.used >= me.roll) return;
-  if (S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'step', dx, dy }));
+  send({ t: 'step', dx, dy });
 }
-function doneTurn() { if (myTurn() && S.ws.readyState === 1) S.ws.send(JSON.stringify({ t: 'done' })); }
+function doneTurn() { if (myTurn()) send({ t: 'done' }); }
 
 const KEYS = { w:[0,-1], arrowup:[0,-1], s:[0,1], arrowdown:[0,1], a:[-1,0], arrowleft:[-1,0], d:[1,0], arrowright:[1,0] };
 addEventListener('keydown', e => {

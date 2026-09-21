@@ -476,6 +476,7 @@ const srv = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server: srv });
+setInterval(() => { for (const c of wss.clients) if (c.readyState === 1) c.ping(); }, 30000).unref(); // keep proxies from dropping idle sockets
 let nextId = 1;
 wss.on('connection', ws => {
   ws.on('message', raw => {
