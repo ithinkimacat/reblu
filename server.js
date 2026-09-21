@@ -12,7 +12,7 @@ const START = [0, 0];
 const PORT = process.env.PORT || 8000;
 
 const key = (x, y) => x + ',' + y;
-const fin = () => [G.w - 1, G.h - 1];
+const fin = () => G.goal;
 const inGrid = (x, y) => x >= 0 && y >= 0 && x < G.w && y < G.h;
 const d6 = () => 1 + Math.floor(Math.random() * 6);
 
@@ -20,6 +20,7 @@ const d6 = () => 1 + Math.floor(Math.random() * 6);
 // live-tunable settings; persisted across newGame() resets, edited from client panel
 const CFG = { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3, obs: OBS_COUNT, blueCount: 1, redCount: 1, sizeX: 25, sizeY: 25 };
 let G;
+let worldGen = 0; // bumped by newGame(): async phase chains from a dead world abort on mismatch
 
 function buildObs(count, occupied = new Set()) {
   const obs = new Set();
@@ -33,10 +34,14 @@ function buildObs(count, occupied = new Set()) {
 }
 
 function newGame(keepPlayers) {
+  worldGen++;
   G = {
+    gen: worldGen,
     tick: 0,
     w: CFG.sizeX,
     h: CFG.sizeY,
+    goal: [CFG.sizeX - 1, CFG.sizeY - 1],
+    goalJump: null,       // {from, to} when a blue dot reaches the goal before any player
     phase: 'lobby',      // lobby | move | dots | over
     winner: null,
     obs: new Set(),
@@ -86,7 +91,8 @@ function respawnPlayer(p) {
 
 function addPlayer(id, name) {
   const colors = ['#ffd54f','#4dd0e1','#aed581','#f48fb1','#ce93d8','#ffab91','#90a4ae','#fff176'];
-  const p = { id, name: (name || 'anon').slice(0, 16), color: colors[id % colors.length],
+  const clean = String(name || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4);
+  const p = { id, name: clean || 'anon', color: colors[id % colors.length],
     x: 0, y: 0, roll: 0, used: 0, lastDir: null, rider: null, dead: false, wins: 0, ready: false };
   G.players.set(id, p);
   const [x, y] = spawnCells(1, occupiedCells())[0];
@@ -188,9 +194,11 @@ function evalLanding(p) {
 // move all dots one cell along their precomputed path, broadcast per step (client animates)
 function animateDotMoves(movers, done) {
   // movers: [{dot, path:[ [x,y]... ], ref}]
+  const gen = G.gen;
   let step = 0;
   const max = Math.max(0, ...movers.map(m => m.path.length));
   function stepFn() {
+    if (G.gen !== gen) return; // world was reset mid-animation
     for (const m of movers) {
       if (step < m.path.length) {
         [m.dot.x, m.dot.y] = m.path[step];
@@ -218,7 +226,9 @@ function bluePhase(done) {
     return { dot: b, ref: 'b' + b.id, path };
   });
   for (const b of G.blues) if (b.boost > 0) b.boost--;
+  const gen = G.gen;
   animateDotMoves(movers, () => {
+    if (G.gen !== gen) return;
     // merge overlapping blues (riders stick with surviving dot, merge -> speed boost)
     const byCell = new Map();
     for (const b of G.blues) {
@@ -232,6 +242,15 @@ function bluePhase(done) {
       }
     }
     broadcast();
+    // goal teleport: a blue dot arrived before any player did
+    const [gx, gy] = fin();
+    if (G.blues.some(b => b.x === gx && b.y === gy) &&
+        ![...G.players.values()].some(p => !p.dead && p.x === gx && p.y === gy)) {
+      const from = [...G.goal];
+      G.goal = teleportSpot();
+      G.goalJump = { from, to: [...G.goal] };
+      broadcast();
+    }
     if (checkWin()) return;
     done();
   });
@@ -269,7 +288,9 @@ function redPhase(done) {
     if (!path.length) path = redPath(r, claimed, true); // every reachable blue taken: gang up anyway
     return path.length ? { dot: r, ref: 'r' + r.id, path } : null;
   }).filter(Boolean);
+  const gen = G.gen;
   animateDotMoves(movers, () => {
+    if (G.gen !== gen) return;
     // reds overlapping other reds annihilate each other (no blast)
     const gone = new Set();
     for (let i = 0; i < G.reds.length; i++) for (let j = i + 1; j < G.reds.length; j++)
@@ -338,8 +359,23 @@ let turnIdx = 0;
 let turnTimer = null;
 
 // Begin pressed by everyone in the lobby: fresh board, first turn
+// fresh goal spot for the teleport rule: empty, far from start
+function teleportSpot() {
+  const [sx, sy] = START, [gx, gy] = fin();
+  for (let tries = 0; tries < 300; tries++) {
+    const x = Math.floor(Math.random() * G.w), y = Math.floor(Math.random() * G.h);
+    if (G.obs.has(key(x, y)) || (x === sx && y === sy) || (x === gx && y === gy)) continue;
+    if ([...G.players.values()].some(p => !p.dead && p.x === x && p.y === y)) continue;
+    if (G.blues.some(b => b.x === x && b.y === y)) continue;
+    if (Math.abs(x - sx) + Math.abs(y - sy) < Math.min(G.w, G.h) / 2) continue;
+    return [x, y];
+  }
+  return [gx ? 0 : G.w - 1, gy ? 0 : G.h - 1]; // fallback: opposite corner
+}
+
 function startGame() {
   G.w = CFG.sizeX; G.h = CFG.sizeY;
+  G.goal = [G.w - 1, G.h - 1]; G.goalJump = null;
   G.obs = buildObs(CFG.obs);
   G.blues = []; G.reds = []; G.lastBlasts = [];
   G.tick = 0; G.winner = null;
@@ -362,6 +398,7 @@ function turnLoop() {
   turnIdx++;
   G.tick++;
   G.lastBlasts = [];
+  G.goalJump = null;
   if (p.dead) respawnPlayer(p); // "respawn at start next tick"
   p.roll = d6(); p.used = 0; p.lastDir = null;
   G.phase = 'move'; G.turnId = p.id; G.turnEndsAt = Date.now() + TURN_MS;
@@ -377,7 +414,9 @@ function endMove(id) {
     evalLanding(p);
     if (checkWin()) return; // pushed onto the finish still counts
   }
+  const gen = G.gen;
   bluePhase(() => redPhase(() => {
+    if (G.gen !== gen) return; // world was reset mid-turn
     blastPhase();
     spawnPhase();
     G.phase = 'dots';
@@ -408,6 +447,8 @@ function snapshot() {
     turnMsLeft: G.phase === 'move' ? Math.max(0, G.turnEndsAt - Date.now()) : 0,
     obs: [...G.obs].map(k => k.split(',').map(Number)),
     blasts: G.lastBlasts,
+    goal: G.goal,
+    goalJump: G.goalJump,
     cfg: G.cfg,
     w: G.w, h: G.h,
     players: [...G.players.values()].map(p => ({
@@ -470,6 +511,7 @@ wss.on('connection', ws => {
     clients.delete(ws);
     G.players.delete(id);
     if (G.turnId === id) endMove(id); // active player bailed: move on
+    if (!G.players.size && G.phase !== 'lobby') { clearTimeout(turnTimer); newGame(); } // nobody left: back to lobby
     broadcast();
   });
 });

@@ -30,6 +30,8 @@
   #lobbybox { background:#161b22; border-radius:10px; padding:18px 22px; min-width:240px; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px #000a; }
   #lobbybox h2 { margin:0; }
   #plist { display:flex; flex-direction:column; gap:4px; font-size:15px; }
+  #plist .prow { display:flex; align-items:center; gap:7px; }
+  #plist .pstat { margin-left:auto; color:var(--mut); font-size:13px; }
   #begin { font:inherit; font-weight:800; font-size:18px; padding:10px 0; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
   #begin:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
 </style>
@@ -57,7 +59,7 @@
 const S = { me: null, st: null, ws: null, lastStateAt: 0, turnMsAtRecv: 0, lastTurnKey: '', ents: new Map(), blastFx: [] };
 const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
 
-const name = new URL(location.href).searchParams.get('name') || prompt('Your name?') || 'anon';
+const name = new URL(location.href).searchParams.get('name') || prompt('Your name? (letters/numbers, max 4)') || 'anon';
 
 // same-origin WS by default; hosted statically (e.g. GitHub Pages), point at the game server: ?srv=https://reblu.onrender.com
 const SRV = new URL(location.href).searchParams.get('srv') || location.origin;
@@ -86,6 +88,9 @@ function onState(m) {
   // blast effect trigger
   if (m.blasts.length && (!S.st || S.st.blasts !== m.blasts))
     S.blastFx = m.blasts.map(b => ({ ...b, t0: performance.now() }));
+  // goal teleport trigger
+  if (m.goalJump && (!S.st || S.st.goalJump !== m.goalJump))
+    S.goalFx = { ...m.goalJump, t0: performance.now() };
   S.st = m; S.lastStateAt = performance.now(); S.turnMsAtRecv = m.turnMsLeft;
   // sync smooth entities
   syncEnts(m);
@@ -135,6 +140,7 @@ const IN = {};
       plus.addEventListener('click', () => send((+input.value || f.min) + 1));
       input.addEventListener('change', () => { if (input.value !== '') send(+input.value); });
     }
+    panel.appendChild(lb);
   }
 }
 
@@ -233,12 +239,33 @@ function draw(now) {
   }
   const at = (x, y) => [(x + 0.5) * cell, (y + 0.5) * cell];
 
-  // start / finish
+  // start / goal
+  const [gx, gy] = st.goal || [w - 1, h - 1];
   ctx.fillStyle = '#2ea043'; ctx.fillRect(0, 0, cell, cell);
   const pulse = 0.75 + 0.25 * Math.sin(now / 300);
-  ctx.fillStyle = `rgba(255,213,79,${pulse})`; ctx.fillRect((w-1)*cell, (h-1)*cell, cell, cell);
+  ctx.fillStyle = `rgba(255,213,79,${pulse})`; ctx.fillRect(gx*cell, gy*cell, cell, cell);
   ctx.font = `bold ${cell*0.32}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#6b5b00'; ctx.fillText('GOAL', ...at(w-1, h-1));
+  ctx.fillStyle = '#6b5b00'; ctx.fillText('GOAL', ...at(gx, gy));
+
+  // goal teleport fx: implosion ring at the old spot, burst at the new one
+  S.goalFx = S.goalFx && now - S.goalFx.t0 < 900 ? S.goalFx : null;
+  if (S.goalFx) {
+    const t = (now - S.goalFx.t0) / 900;
+    const [fx0, fy0] = S.goalFx.from, [fx1, fy1] = S.goalFx.to;
+    // collapsing ring + fading tile at the old spot
+    const oldA = 1 - t;
+    ctx.strokeStyle = `rgba(255,213,79,${oldA})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(...at(fx0, fy0), cell * (2.2 * (1 - t) + 0.3), 0, 7); ctx.stroke();
+    ctx.fillStyle = `rgba(255,213,79,${oldA * 0.5})`;
+    ctx.fillRect(fx0*cell, fy0*cell, cell, cell);
+    // expanding ring + rising tile at the new spot
+    ctx.strokeStyle = `rgba(255,213,79,${Math.min(1, 2 * t)})`;
+    ctx.beginPath(); ctx.arc(...at(fx1, fy1), cell * (0.3 + 2.2 * t), 0, 7); ctx.stroke();
+    if (t < 0.5) {
+      ctx.fillStyle = `rgba(255,240,180,${(1 - t * 2) * 0.8})`;
+      ctx.fillRect(fx1*cell, fy1*cell, cell, cell);
+    }
+  }
 
   // obstacles
   ctx.fillStyle = '#3a3f45';
@@ -309,7 +336,7 @@ function draw(now) {
   if (st.phase === 'lobby') {
     lb.hidden = false;
     document.getElementById('plist').innerHTML =
-      st.players.map(p => `<span class="sw" style="background:${p.color}"></span><span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''} — ${p.ready ? 'ready' : 'waiting'}`).join('<br>');
+      st.players.map(p => `<div class="prow"><span class="sw" style="background:${p.color}"></span><span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''}<span class="pstat">${p.ready ? 'ready' : 'waiting'}</span></div>`).join('');
     const iReady = me && me.ready;
     const b = document.getElementById('begin');
     b.disabled = !me; // clickable until you declare ready
