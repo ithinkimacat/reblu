@@ -24,7 +24,7 @@
   #panel .step button:hover { background:#2d3742; }
   #panel input[type=number] { width:46px; background:#0e1116; color:var(--fg); border:1px solid #30363d; border-radius:4px; padding:2px 2px; font:inherit; text-align:center; -moz-appearance:textfield; }
   #panel input::-webkit-outer-spin-button, #panel input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:baseline; }
+  .sw { display:inline-block; width:18px; height:18px; margin-right:5px; vertical-align:middle; }
   #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000a; z-index:9; }
   #lobby[hidden] { display:none; }
   #nameentry { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--bg); z-index:20; flex-direction:column; gap:18px; }
@@ -44,6 +44,11 @@
   #plist { display:flex; flex-direction:column; gap:4px; font-size:15px; }
   #plist .prow { display:flex; align-items:center; gap:7px; }
   #plist .pstat { margin-left:auto; color:var(--mut); font-size:13px; }
+  #hats { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  #hats .hatbtn { background:#222a33; border:1px solid #30363d; border-radius:6px; padding:3px; cursor:pointer; line-height:0; }
+  #hats .hatbtn:hover { background:#2d3742; }
+  #hats .hatbtn.sel { border-color:#58a6ff; box-shadow:0 0 0 1px #58a6ff; }
+  #hatlabel { font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; }
   #begin { font:inherit; font-weight:800; font-size:18px; padding:10px 0; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
   #begin:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
 </style>
@@ -73,6 +78,8 @@
   <div id="lobbybox">
     <h2>Lobby</h2>
     <div id="plist"></div>
+    <div id="hatlabel">Pick a hat</div>
+    <div id="hats"></div>
     <div id="panel"></div>
     <button id="begin">BEGIN</button>
     <div class="mut" id="lobbyhint"></div>
@@ -216,6 +223,56 @@ const IN = {};
       input.addEventListener('change', () => { if (input.value !== '') sendCfg(+input.value); });
     }
     panel.appendChild(lb);
+  }
+}
+
+// ---- hats: drawn on top of the player cube; cx = cube center x, topY = cube top y, s = cube size ----
+function drawHat(ctx, kind, cx, topY, s) {
+  if (!kind || kind === 'none') return;
+  ctx.save();
+  if (kind === 'crown') {
+    ctx.fillStyle = '#ffd54f';
+    ctx.fillRect(cx - s*0.34, topY - s*0.2, s*0.68, s*0.2);
+    ctx.beginPath();
+    ctx.moveTo(cx - s*0.34, topY - s*0.2);
+    ctx.lineTo(cx - s*0.22, topY - s*0.42); ctx.lineTo(cx - s*0.11, topY - s*0.2);
+    ctx.lineTo(cx, topY - s*0.42); ctx.lineTo(cx + s*0.11, topY - s*0.2);
+    ctx.lineTo(cx + s*0.22, topY - s*0.42); ctx.lineTo(cx + s*0.34, topY - s*0.2);
+    ctx.closePath(); ctx.fill();
+  } else if (kind === 'tophat') {
+    ctx.fillStyle = '#22262b';
+    ctx.fillRect(cx - s*0.45, topY - s*0.14, s*0.9, s*0.14);
+    ctx.fillRect(cx - s*0.27, topY - s*0.58, s*0.54, s*0.46);
+    ctx.fillStyle = '#f85149';
+    ctx.fillRect(cx - s*0.27, topY - s*0.26, s*0.54, s*0.09);
+  } else if (kind === 'party') {
+    ctx.fillStyle = '#f48fb1';
+    ctx.beginPath(); ctx.moveTo(cx - s*0.3, topY); ctx.lineTo(cx + s*0.3, topY); ctx.lineTo(cx, topY - s*0.62); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff176';
+    ctx.beginPath(); ctx.arc(cx, topY - s*0.62, s*0.1, 0, 7); ctx.fill();
+  } else if (kind === 'halo') {
+    ctx.strokeStyle = '#ffd54f'; ctx.lineWidth = Math.max(1.5, s*0.09);
+    ctx.beginPath(); ctx.ellipse(cx, topY - s*0.42, s*0.38, s*0.13, 0, 0, 7); ctx.stroke();
+  } else if (kind === 'horns') {
+    ctx.fillStyle = '#f85149';
+    ctx.beginPath(); ctx.moveTo(cx - s*0.38, topY); ctx.lineTo(cx - s*0.3, topY - s*0.34); ctx.lineTo(cx - s*0.14, topY - s*0.05); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx + s*0.38, topY); ctx.lineTo(cx + s*0.3, topY - s*0.34); ctx.lineTo(cx + s*0.14, topY - s*0.05); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+const HATS = ['none', 'crown', 'tophat', 'party', 'halo', 'horns'];
+{
+  const row = document.getElementById('hats');
+  for (const h of HATS) {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'hatbtn'; btn.dataset.hat = h;
+    btn.addEventListener('click', () => send({ t: 'hat', hat: h }));
+    const c = document.createElement('canvas'); c.width = 26; c.height = 26;
+    btn.appendChild(c); row.appendChild(btn);
+    const x = c.getContext('2d');
+    x.fillStyle = '#8b98a5'; x.beginPath(); x.roundRect(5, 9, 16, 12, 3); x.fill(); // sample cube
+    drawHat(x, h, 13, 9, 16);
   }
 }
 
@@ -382,6 +439,7 @@ function draw(now) {
     ctx.fillStyle = p.color;
     ctx.beginPath(); ctx.roundRect(cx - cell*0.38, cy - cell*0.38 - ride, cell*0.76, cell*0.76, 4); ctx.fill();
     if (p.rider) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+    drawHat(ctx, p.hat, cx, cy - cell*0.38 - ride, cell*0.76);
     ctx.fillStyle = '#0009'; ctx.font = `${cell*0.45}px system-ui`;
     ctx.fillText(p.name.slice(0, 2), cx, cy - ride);
     ctx.globalAlpha = 1;
@@ -410,8 +468,18 @@ function draw(now) {
   const lb = document.getElementById('lobby');
   if (st.phase === 'lobby') {
     lb.hidden = false;
-    document.getElementById('plist').innerHTML =
-      st.players.map(p => `<div class="prow"><span class="sw" style="background:${p.color}"></span><span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''}<span class="pstat">${p.ready ? 'ready' : 'waiting'}</span></div>`).join('');
+    const html =
+      st.players.map(p => `<div class="prow"><canvas class="sw" width="18" height="18"></canvas><span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''}<span class="pstat">${p.ready ? 'ready' : 'waiting'}</span></div>`).join('');
+    const plist = document.getElementById('plist');
+    if (html !== S.plistHtml) { S.plistHtml = html; plist.innerHTML = html; }
+    [...plist.querySelectorAll('.prow')].forEach((row, i) => {
+      const p = st.players[i], c = row.querySelector('.sw'), x = c.getContext('2d');
+      x.clearRect(0, 0, 18, 18);
+      x.fillStyle = p.color; x.beginPath(); x.roundRect(2, 6, 14, 10, 3); x.fill();
+      drawHat(x, p.hat, 9, 6, 14);
+    });
+    for (const btn of document.querySelectorAll('.hatbtn'))
+      btn.classList.toggle('sel', !!(me && me.hat === btn.dataset.hat));
     const iReady = me && me.ready;
     const b = document.getElementById('begin');
     b.disabled = !me; // clickable until you declare ready

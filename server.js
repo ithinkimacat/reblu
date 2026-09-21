@@ -12,6 +12,7 @@ const START = [0, 0];
 const PORT = process.env.PORT || 8000;
 
 const key = (x, y) => x + ',' + y;
+const HATS = ['none', 'crown', 'tophat', 'party', 'halo', 'horns'];
 const fin = () => G.goal;
 const inGrid = (x, y) => x >= 0 && y >= 0 && x < G.w && y < G.h;
 const d6 = () => 1 + Math.floor(Math.random() * 6);
@@ -93,7 +94,7 @@ function addPlayer(id, name) {
   const colors = ['#ffd54f','#4dd0e1','#aed581','#f48fb1','#ce93d8','#ffab91','#90a4ae','#fff176'];
   const clean = String(name || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4);
   const p = { id, name: clean || 'anon', color: colors[id % colors.length],
-    x: 0, y: 0, roll: 0, used: 0, lastDir: null, rider: null, dead: false, wins: 0, ready: false };
+    x: 0, y: 0, roll: 0, used: 0, lastDir: null, rider: null, dead: false, wins: 0, ready: false, hat: 'none' };
   G.players.set(id, p);
   const [x, y] = spawnCells(1, occupiedCells())[0];
   p.x = x; p.y = y;
@@ -453,7 +454,7 @@ function snapshot() {
     w: G.w, h: G.h,
     players: [...G.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
-      roll: p.roll, used: p.used, dead: p.dead, wins: p.wins, rider: !!p.rider, ready: !!p.ready,
+      roll: p.roll, used: p.used, dead: p.dead, wins: p.wins, rider: !!p.rider, ready: !!p.ready, hat: p.hat,
     })),
     blues: G.blues.map(b => ({ id: b.id, x: b.x, y: b.y, boost: b.boost })),
     reds: G.reds.map(r => ({ id: r.id, x: r.x, y: r.y })),
@@ -498,6 +499,9 @@ wss.on('connection', ws => {
       if (m.sizeX != null) G.cfg.sizeX = clamp(m.sizeX, 15, 40);
       if (m.sizeY != null) G.cfg.sizeY = clamp(m.sizeY, 15, 40);
       broadcast();
+    } else if (m.t === 'hat') { // hats are a lobby activity, like settings
+      const p = G.players.get(clients.get(ws));
+      if (p && G.phase === 'lobby' && HATS.includes(m.hat)) { p.hat = m.hat; broadcast(); }
     } else if (m.t === 'begin') {
       const p = G.players.get(clients.get(ws));
       if (p && G.phase === 'lobby') { p.ready = true; broadcast(); }
