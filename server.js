@@ -14,7 +14,6 @@ const PORT = process.env.PORT || 8000;
 const key = (x, y) => x + ',' + y;
 const fin = () => [G.size - 1, G.size - 1];
 const inGrid = (x, y) => x >= 0 && y >= 0 && x < G.size && y < G.size;
-const manh = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const d6 = () => 1 + Math.floor(Math.random() * 6);
 
 // ---------- game state ----------
@@ -95,7 +94,8 @@ function addPlayer(id, name) {
 }
 
 // ---------- pathing (dots): BFS avoiding obstacles ----------
-function bfsPath(sx, sy, tx, ty, maxSteps) {
+// avoid: optional Set of cell keys treated like obstacles (used for soft routing)
+function bfsPath(sx, sy, tx, ty, maxSteps, avoid) {
   if (sx === tx && sy === ty) return [];
   const prev = new Map([[key(sx, sy), null]]);
   const q = [[sx, sy]];
@@ -106,6 +106,7 @@ function bfsPath(sx, sy, tx, ty, maxSteps) {
     for (const [dx, dy] of [[0,1],[1,0],[0,-1],[-1,0]]) {
       const nx = x + dx, ny = y + dy, k = key(nx, ny);
       if (!inGrid(nx, ny) || G.obs.has(k) || prev.has(k)) continue;
+      if (avoid && avoid.has(k) && !(nx === tx && ny === ty)) continue;
       prev.set(k, key(x, y));
       if (nx === tx && ny === ty) { found = k; q.length = 0; break; }
       q.push([nx, ny]);
@@ -115,6 +116,16 @@ function bfsPath(sx, sy, tx, ty, maxSteps) {
   const cells = [];
   for (let k = found; k; k = prev.get(k)) cells.unshift(k.split(',').map(Number));
   return cells.slice(0, maxSteps); // includes target, excludes start
+}
+
+// cells a red could blast now or next phase: its 3x3 neighborhood
+function redBlastZone() {
+  const z = new Set();
+  for (const r of G.reds) for (let ex = -1; ex <= 1; ex++) for (let ey = -1; ey <= 1; ey++) {
+    const x = r.x + ex, y = r.y + ey;
+    if (inGrid(x, y)) z.add(key(x, y));
+  }
+  return z;
 }
 
 function randomEmptyCell() {
@@ -195,10 +206,16 @@ function animateDotMoves(movers, done) {
 }
 
 function bluePhase(done) {
-  const movers = G.blues.map(b => ({
-    dot: b, ref: 'b' + b.id,
-    path: bfsPath(b.x, b.y, fin()[0], fin()[1], G.cfg.blueSpeed + b.boost),
-  }));
+  const zone = redBlastZone();
+  const redCells = new Set(G.reds.map(r => key(r.x, r.y)));
+  const movers = G.blues.map(b => {
+    const max = G.cfg.blueSpeed + b.boost, [fx, fy] = fin();
+    // prefer routes away from red blast zones, then away from reds, then anything goes
+    let path = bfsPath(b.x, b.y, fx, fy, max, zone);
+    if (!path.length) path = bfsPath(b.x, b.y, fx, fy, max, redCells);
+    if (!path.length) path = bfsPath(b.x, b.y, fx, fy, max);
+    return { dot: b, ref: 'b' + b.id, path };
+  });
   for (const b of G.blues) if (b.boost > 0) b.boost--;
   animateDotMoves(movers, () => {
     // merge overlapping blues (riders stick with surviving dot, merge -> speed boost)
@@ -219,16 +236,37 @@ function bluePhase(done) {
   });
 }
 
-function redPhase(done) {
-  const movers = G.reds.map(r => {
-    let best = null, bestD = Infinity;
-    for (const b of G.blues) {
-      const d = manh(r, b);
-      if (d < bestD || (d === bestD && Math.random() < 0.5)) { bestD = d; best = b; }
+// flood from a red: path to the nearest reachable blue (walls and other reds respected).
+// claimed blues are skipped unless allowClaimed — spreads reds across targets.
+function redPath(r, claimed, allowClaimed) {
+  const blocked = new Set(G.reds.filter(o => o !== r).map(o => key(o.x, o.y)));
+  const prev = new Map([[key(r.x, r.y), null]]);
+  const q = [[r.x, r.y]];
+  while (q.length) {
+    const [x, y] = q.shift(), k = key(x, y);
+    const b = (x !== r.x || y !== r.y) && G.blues.find(b => b.x === x && b.y === y && (allowClaimed || !claimed.has(b.id)));
+    if (b) {
+      const cells = [];
+      for (let kk = k; kk; kk = prev.get(kk)) cells.unshift(kk.split(',').map(Number));
+      claimed.add(b.id);
+      return cells.slice(1, G.cfg.redSpeed + 1);
     }
-    if (!best) return null;
+    for (const [dx, dy] of [[0,1],[1,0],[0,-1],[-1,0]]) {
+      const nx = x + dx, ny = y + dy, nk = key(nx, ny);
+      if (!inGrid(nx, ny) || G.obs.has(nk) || prev.has(nk) || blocked.has(nk)) continue;
+      prev.set(nk, k); q.push([nx, ny]);
+    }
+  }
+  return [];
+}
+
+function redPhase(done) {
+  const claimed = new Set();
+  const movers = G.reds.map(r => {
     r.px = r.x; r.py = r.y;
-    return { dot: r, ref: 'r' + r.id, path: bfsPath(r.x, r.y, best.x, best.y, G.cfg.redSpeed) };
+    let path = redPath(r, claimed, false);
+    if (!path.length) path = redPath(r, claimed, true); // every reachable blue taken: gang up anyway
+    return path.length ? { dot: r, ref: 'r' + r.id, path } : null;
   }).filter(Boolean);
   animateDotMoves(movers, () => {
     // reds overlapping other reds annihilate each other (no blast)

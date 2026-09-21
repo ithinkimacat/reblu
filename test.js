@@ -40,5 +40,44 @@ newGame();
   tryStep(1, 1, 0);
   assert.deepStrictEqual([A.x, A.y], [3, 0], 'roll caps steps');
 }
-console.log('ok');
+
+// dot pathfinding: blue avoids red blast zones; reds pick reachable, distinct targets
+{
+  newGame();
+  const g = G();
+  g.obs.clear();
+  g.size = 25;
+  // red at (6,6): its blast zone covers x/y in [5..7]
+  g.reds = [{ id: 1, x: 6, y: 6, px: 6, py: 6 }];
+  g.blues = [{ id: 1, x: 5, y: 4, boost: 0 }];
+  // blue pathing lives in bluePhase (async); assert on bfsPath-with-avoid instead
+  const zone = new Set();
+  for (let ex = -1; ex <= 1; ex++) for (let ey = -1; ey <= 1; ey++) zone.add(key(6 + ex, 6 + ey));
+  const p = bfsPath(5, 4, 24, 24, 4, zone);
+  assert(p.length, 'blue finds a route');
+  assert(p.every(([x, y]) => !zone.has(key(x, y))), 'blue route skirts the blast zone');
+  const direct = bfsPath(5, 4, 24, 24, 4);
+  assert(p.length <= direct.length, 'zone route costs no extra steps');
+}
+
+(async () => {
+  const mod = require('./server.js');
+  mod.newGame();
+  const g = mod.G;
+  g.obs.clear();
+  g.size = 25;
+  // two blues; b1 boxed in by obstacles, red at origin must target b2
+  g.blues = [{ id: 1, x: 10, y: 10, boost: 0 }, { id: 2, x: 5, y: 0, boost: 0 }];
+  g.obs.add(key(9, 10)); g.obs.add(key(11, 10)); g.obs.add(key(10, 9)); g.obs.add(key(10, 11));
+  g.reds = [{ id: 1, x: 0, y: 2, px: 0, py: 2 }, { id: 2, x: 0, y: 3, px: 0, py: 3 }];
+  g.phase = 'move'; g.turnId = 1; g.tick = 1;
+  let done;
+  const p = new Promise(r => { mod.endMove(1); const iv = setInterval(() => { if (g.phase === 'dots') { clearInterval(iv); r(); } }, 50); });
+  await p;
+  const r1 = g.reds.find(r => r.id === 1), r2 = g.reds.find(r => r.id === 2);
+  assert(r1.x !== 10 || r1.y !== 10, 'red does not chase the boxed-in blue');
+  assert(!(r1.x === r2.x && r1.y === r2.y), 'reds stay apart');
+  console.log('ok');
+  process.exit(0);
+})();
 process.exit(0); // dot-phase timers would otherwise keep the loop alive

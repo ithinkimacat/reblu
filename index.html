@@ -15,11 +15,10 @@
   @keyframes dicepop { 0%{transform:scale(.3) rotate(-30deg);opacity:0} 25%{opacity:1} 60%{transform:scale(1.1) rotate(6deg);opacity:1} 100%{transform:scale(1) rotate(0);opacity:0} }
   #overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:#000a; font-size:36px; font-weight:800; z-index:10; animation:winpop .4s ease-out; }
   @keyframes winpop { from{transform:scale(.8);opacity:0} to{transform:scale(1);opacity:1} }
-  #panel { position:fixed; right:12px; top:12px; background:#161b22; border-radius:8px; padding:10px 12px; width:190px; box-shadow:0 8px 32px #0008; z-index:6; display:flex; flex-direction:column; gap:6px; }
-  #panel h3 { margin:0 0 2px; font-size:13px; }
-  #panel label { font-size:12px; color:var(--mut); display:flex; justify-content:space-between; }
+  #panel { display:flex; flex-direction:column; gap:6px; width:220px; }
+  #panel h3 { grid-column:1 / -1; margin:0; font-size:13px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; }
+  #panel label { font-size:13px; color:var(--mut); display:flex; justify-content:space-between; gap:8px; }
   #panel input[type=number] { width:52px; background:#0e1116; color:var(--fg); border:1px solid #30363d; border-radius:4px; padding:2px 4px; font:inherit; }
-  #panel label input { margin-left:auto; }
   #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000a; z-index:9; }
   #lobby[hidden] { display:none; }
   #lobbybox { background:#161b22; border-radius:10px; padding:18px 22px; min-width:240px; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px #000a; }
@@ -38,22 +37,21 @@
 <div id="score" class="mut"></div>
 <div id="dice"></div>
 <div id="overlay"></div>
-<div id="panel">
-  <h3>⚙️ Tuning</h3>
-  <label>🔵 every <input type="number" id="n-blueEvery" min="1" max="10"> turns</label>
-  <label>🔴 every <input type="number" id="n-redEvery" min="1" max="10"> turns</label>
-  <label>🔵 speed <input type="number" id="n-blueSpeed" min="1" max="6"></label>
-  <label>🔴 speed <input type="number" id="n-redSpeed" min="1" max="6"></label>
-  <label>🧱 obstacles <input type="number" id="n-obs" min="0" max="100"></label>
-  <label>🔵 count <input type="number" id="n-blueCount" min="1" max="5"></label>
-  <label>📐 size <input type="number" id="n-size" min="15" max="40"></label>
-  <div class="mut" style="font-size:11px">lobby only</div>
-</div>
 <div id="lobby" hidden>
   <div id="lobbybox">
     <h2>Lobby</h2>
     <div id="plist"></div>
-    <button id="begin">▶ BEGIN</button>
+    <div id="panel">
+      <h3>Settings</h3>
+      <label>Blue every <input type="number" id="n-blueEvery" min="1" max="10"> turns</label>
+      <label>Red every <input type="number" id="n-redEvery" min="1" max="10"> turns</label>
+      <label>Blue speed <input type="number" id="n-blueSpeed" min="1" max="6"></label>
+      <label>Red speed <input type="number" id="n-redSpeed" min="1" max="6"></label>
+      <label>Obstacles <input type="number" id="n-obs" min="0" max="100"></label>
+      <label>Blue count <input type="number" id="n-blueCount" min="1" max="5"></label>
+      <label>Board size <input type="number" id="n-size" min="15" max="40"></label>
+    </div>
+    <button id="begin">BEGIN</button>
     <div class="mut" id="lobbyhint"></div>
   </div>
 </div>
@@ -111,7 +109,7 @@ document.getElementById('begin').addEventListener('click', () => {
 
 function showDice(roll, mine) {
   const el = document.getElementById('dice');
-  el.textContent = mine ? `🎲 ${roll}` : '';
+  el.textContent = mine ? `roll ${roll}` : '';
   if (!mine) return;
   el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
@@ -196,8 +194,8 @@ function draw(now) {
   ctx.fillStyle = '#2ea043'; ctx.fillRect(0, 0, cell, cell);
   const pulse = 0.75 + 0.25 * Math.sin(now / 300);
   ctx.fillStyle = `rgba(255,213,79,${pulse})`; ctx.fillRect((n-1)*cell, (n-1)*cell, cell, cell);
-  ctx.font = `${cell*0.7}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('🏁', ...at(n-1, n-1));
+  ctx.font = `bold ${cell*0.32}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#6b5b00'; ctx.fillText('GOAL', ...at(n-1, n-1));
 
   // obstacles
   ctx.fillStyle = '#3a3f45';
@@ -268,13 +266,13 @@ function draw(now) {
   if (st.phase === 'lobby') {
     lb.hidden = false;
     document.getElementById('plist').innerHTML =
-      st.players.map(p => `${p.ready ? '✅' : '⬜'} <span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''}`).join('<br>');
+      st.players.map(p => `<span style="color:${p.color}">${p.name}</span>${p.id === S.me ? ' (you)' : ''} — ${p.ready ? 'ready' : 'waiting'}`).join('<br>');
     const iReady = me && me.ready;
     const b = document.getElementById('begin');
     b.disabled = !iReady;
-    b.textContent = iReady ? '⏳ waiting for others…' : '▶ BEGIN';
+    b.textContent = iReady ? 'waiting for others...' : 'BEGIN';
     document.getElementById('lobbyhint').textContent =
-      st.players.filter(p => p.ready).length + '/' + st.players.length + ' ready — tweak settings on the right';
+      st.players.filter(p => p.ready).length + ' / ' + st.players.length + ' ready — game starts when all press Begin';
     banner.textContent = 'lobby — press Begin when ready'; banner.style.color = '#8b98a5';
     document.getElementById('timerfill').style.width = '0%';
   } else lb.hidden = true;
@@ -283,17 +281,17 @@ function draw(now) {
     const left = Math.max(0, S.turnMsAtRecv - (now - S.lastStateAt));
     document.getElementById('timerfill').style.width = (100 * left / 8000) + '%';
     banner.innerHTML = tp.id === S.me
-      ? `🎯 Your turn — 🎲 ${tp.roll}, moves left: <b>${tp.roll - tp.used}</b>`
-      : `${tp.name}'s turn — 🎲 ${tp.roll}, moves left: ${tp.roll - tp.used}`;
+      ? `Your turn — roll ${tp.roll}, moves left: <b>${tp.roll - tp.used}</b>`
+      : `${tp.name}'s turn — roll ${tp.roll}, moves left: ${tp.roll - tp.used}`;
     banner.style.color = tp.color;
   } else if (st.phase === 'dots') {
     banner.textContent = '…dots on the move…'; banner.style.color = '#8b98a5';
     document.getElementById('timerfill').style.width = '0%';
   }
   document.getElementById('score').textContent =
-    st.players.map(p => `${p.dead ? '💀 ' : ''}${p.name}${p.id === S.me ? ' (you)' : ''}: ${p.wins}`).join(' · ');
+    st.players.map(p => `${p.dead ? '[out] ' : ''}${p.name}${p.id === S.me ? ' (you)' : ''}: ${p.wins}`).join(' · ');
   const ov = document.getElementById('overlay');
-  if (st.phase === 'over') { ov.style.display = 'flex'; ov.textContent = `🏆 ${st.winner} wins!`; }
+  if (st.phase === 'over') { ov.style.display = 'flex'; ov.textContent = `${st.winner} wins!`; }
   else ov.style.display = 'none';
 
   requestAnimationFrame(draw);
