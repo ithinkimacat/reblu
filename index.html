@@ -1,4 +1,5 @@
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>reblu</title>
 <style>
   :root { --bg:#0e1116; --fg:#e6e6e6; --mut:#8b98a5; }
@@ -16,8 +17,9 @@
   #overlay { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:#000a; font-size:36px; font-weight:800; z-index:10; animation:winpop .4s ease-out; }
   @keyframes winpop { from{transform:scale(.8);opacity:0} to{transform:scale(1);opacity:1} }
   #panel { display:flex; flex-direction:column; gap:6px; width:230px; }
-  #panel h3 { margin:6px 0 0; font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; border-bottom:1px solid #30363d; padding-bottom:3px; }
+  #panel h3 { margin:6px 0 0; font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; border-bottom:1px solid #30363d; padding-bottom:3px; cursor:pointer; user-select:none; }
   #panel h3:first-child { margin-top:0; }
+  #panel div.cat { display:flex; flex-direction:column; gap:6px; }
   #panel label { font-size:13px; color:var(--fg); display:flex; justify-content:space-between; align-items:center; gap:8px; }
   #panel .step { display:inline-flex; align-items:center; gap:3px; }
   #panel .step button { width:22px; height:24px; background:#222a33; color:var(--fg); border:1px solid #30363d; border-radius:4px; cursor:pointer; font:inherit; line-height:1; }
@@ -25,7 +27,7 @@
   #panel input[type=number] { width:46px; background:#0e1116; color:var(--fg); border:1px solid #30363d; border-radius:4px; padding:2px 2px; font:inherit; text-align:center; -moz-appearance:textfield; }
   #panel input::-webkit-outer-spin-button, #panel input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
   .sw { display:inline-block; width:18px; height:18px; margin-right:5px; vertical-align:middle; }
-  #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000a; z-index:9; }
+  #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000a; z-index:9; overflow-y:auto; padding:12px; }
   #lobby[hidden] { display:none; }
   #nameentry { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--bg); z-index:20; flex-direction:column; gap:18px; }
   #nameentry[hidden] { display:none; }
@@ -39,7 +41,7 @@
   @keyframes nepop { from { transform:scale(.7); } to { transform:scale(1); } }
   #join { font:inherit; font-weight:800; font-size:18px; padding:10px 42px; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
   #join:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
-  #lobbybox { background:#161b22; border-radius:10px; padding:18px 22px; min-width:240px; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px #000a; }
+  #lobbybox { background:#161b22; border-radius:10px; padding:18px 22px; min-width:240px; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px #000a; margin:auto; }
   #lobbybox h2 { margin:0; }
   #plist { display:flex; flex-direction:column; gap:4px; font-size:15px; }
   #plist .prow { display:flex; align-items:center; gap:7px; }
@@ -51,6 +53,12 @@
   #hatlabel { font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; }
   #begin { font:inherit; font-weight:800; font-size:18px; padding:10px 0; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
   #begin:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
+  #touch { display:none; gap:14px; align-items:center; user-select:none; -webkit-user-select:none; }
+  @media (pointer:coarse) { #touch { display:flex; } }
+  #dpad { display:grid; grid-template-columns:repeat(3,54px); grid-template-rows:repeat(2,54px); gap:4px; }
+  #dpad button, #skip { background:#222a33; color:var(--fg); border:1px solid #30363d; border-radius:8px; font:700 20px system-ui,sans-serif; touch-action:none; }
+  #dpad button:active, #skip:active { background:#2d3742; }
+  #skip { height:54px; padding:0 26px; font-size:15px; }
 </style>
 
 <div id="hud">
@@ -58,6 +66,13 @@
 </div>
 <div id="timerbar"><div id="timerfill"></div></div>
 <canvas id="c"></canvas>
+<div id="touch">
+  <div id="dpad">
+    <span></span><button type="button" id="du">&#9650;</button><span></span>
+    <button type="button" id="dl">&#9664;</button><button type="button" id="dd">&#9660;</button><button type="button" id="dr">&#9654;</button>
+  </div>
+  <button type="button" id="skip">SKIP TURN</button>
+</div>
 <div class="mut">WASD / arrows / gamepad · <kbd>Enter</kbd>/<kbd>Space</kbd> or A = end turn early</div>
 <div id="score" class="mut"></div>
 <div id="dice"></div>
@@ -200,8 +215,17 @@ const FIELDS = [
 const IN = {};
 {
   const panel = document.getElementById('panel');
+  let catDiv = null;
   for (const f of FIELDS) {
-    if (f.cat) { const h = document.createElement('h3'); h.textContent = f.cat; panel.appendChild(h); continue; }
+    if (f.cat) {
+      const h = document.createElement('h3'); h.textContent = '▾ ' + f.cat;
+      catDiv = document.createElement('div'); catDiv.className = 'cat';
+      h.addEventListener('click', () => {
+        catDiv.hidden = !catDiv.hidden;
+        h.textContent = (catDiv.hidden ? '▸ ' : '▾ ') + f.cat;
+      });
+      panel.appendChild(h); panel.appendChild(catDiv); continue;
+    }
     const lb = document.createElement('label');
     const name = document.createElement('span'); name.textContent = f.label; lb.appendChild(name);
     if (f.display) {
@@ -222,7 +246,7 @@ const IN = {};
       plus.addEventListener('click', () => sendCfg((+input.value || f.min) + 1));
       input.addEventListener('change', () => { if (input.value !== '') sendCfg(+input.value); });
     }
-    panel.appendChild(lb);
+    catDiv.appendChild(lb);
   }
 }
 
@@ -317,6 +341,14 @@ function step(dx, dy) {
 }
 function doneTurn() { if (myTurn()) send({ t: 'done' }); }
 
+// touch d-pad + skip (coarse pointers only)
+{
+  const pad = [['du', 0, -1], ['dd', 0, 1], ['dl', -1, 0], ['dr', 1, 0]];
+  for (const [id, dx, dy] of pad)
+    document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); step(dx, dy); });
+  document.getElementById('skip').addEventListener('pointerdown', e => { e.preventDefault(); doneTurn(); });
+}
+
 const KEYS = { w:[0,-1], arrowup:[0,-1], s:[0,1], arrowdown:[0,1], a:[-1,0], arrowleft:[-1,0], d:[1,0], arrowright:[1,0] };
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return; // typing in callsign cells or settings fields
@@ -352,14 +384,18 @@ function draw(now) {
   const st = S.st;
   const w = (st && st.w) || 25, h = (st && st.h) || 25;
   const cell = clamped / Math.max(w, h);
-  cvs.width = Math.round(w * cell); cvs.height = Math.round(h * cell);
-  ctx.clearRect(0, 0, cvs.width, cvs.height);
+  const W = Math.round(w * cell), H = Math.round(h * cell);
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  cvs.width = Math.round(W * dpr); cvs.height = Math.round(H * dpr);
+  cvs.style.width = W + 'px'; cvs.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // crisp on retina; reset each frame after resize
+  ctx.clearRect(0, 0, W, H);
   ctx.strokeStyle = '#21262d';
   for (let i = 0; i <= w; i++) {
-    ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,cvs.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,H); ctx.stroke();
   }
   for (let i = 0; i <= h; i++) {
-    ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(cvs.width,i*cell); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(W,i*cell); ctx.stroke();
   }
   if (!st) { requestAnimationFrame(draw); return; }
 
