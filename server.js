@@ -7,7 +7,6 @@ const { WebSocketServer } = require('ws');
 
 const TURN_MS = 8000;      // move-phase window per player
 const DOT_STEP_MS = 150;   // animation pacing between dot cell-steps
-const OBS_COUNT = 10;     // live-tunable via client panel (CFG.obs)
 const START = [0, 0];
 const PORT = process.env.PORT || 8000;
 
@@ -19,7 +18,7 @@ const d6 = () => 1 + Math.floor(Math.random() * 6);
 
 // ---------- game state ----------
 // live-tunable settings; persisted across newGame() resets, edited from client panel
-const CFG = { blueEvery: 2, redEvery: 4, blueSpeed: 2, redSpeed: 3, obs: OBS_COUNT, blueCount: 1, redCount: 1, sizeX: 25, sizeY: 25 };
+const CFG = { blueEvery: 2, redEvery: 3, blueSpeed: 3, redSpeed: 4, obs: 20, blueCount: 5, redCount: 3, sizeX: 15, sizeY: 15 };
 let G;
 let worldGen = 0; // bumped by newGame(): async phase chains from a dead world abort on mismatch
 
