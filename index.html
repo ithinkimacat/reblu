@@ -1,11 +1,11 @@
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>reblu</title>
 <style>
   :root { --bg:#0e1116; --fg:#e6e6e6; --mut:#8b98a5; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px 10px calc(10px + env(safe-area-inset-bottom)); }
   #hud { display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; }
-  #c { background:#161b22; border-radius:8px; max-width:min(92vmin,640px); max-height:min(92vmin,640px); touch-action:none; box-shadow:0 8px 32px #0008; }
+  #c { background:#161b22; border-radius:8px; max-width:min(92vmin,640px); max-height:min(92vmin,640px); touch-action:manipulation; box-shadow:0 8px 32px #0008; }
   .mut { color:var(--mut); } b { font-size:18px; }
   kbd { background:#222a33; border-radius:4px; padding:1px 5px; }
   #banner { font-size:20px; font-weight:700; min-height:26px; transition:opacity .2s; }
@@ -54,11 +54,14 @@
   #begin { font:inherit; font-weight:800; font-size:18px; padding:10px 0; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
   #begin:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
   #touch { display:none; gap:14px; align-items:center; user-select:none; -webkit-user-select:none; }
-  @media (pointer:coarse) { #touch { display:flex; } }
+  @media (pointer:coarse) { #touch { display:flex; } #hints { display:none; } #score { font-size:12px; text-align:center; } }
   #dpad { display:grid; grid-template-columns:repeat(3,54px); grid-template-rows:repeat(2,54px); gap:4px; }
   #dpad button, #skip { background:#222a33; color:var(--fg); border:1px solid #30363d; border-radius:8px; font:700 20px system-ui,sans-serif; touch-action:none; }
   #dpad button:active, #skip:active { background:#2d3742; }
   #skip { height:54px; padding:0 26px; font-size:15px; }
+  @media (orientation:landscape) and (pointer:coarse) {
+    #touch { position:fixed; right:calc(10px + env(safe-area-inset-right)); bottom:calc(10px + env(safe-area-inset-bottom)); flex-direction:column; z-index:3; }
+  }
 </style>
 
 <div id="hud">
@@ -73,7 +76,7 @@
   </div>
   <button type="button" id="skip">SKIP TURN</button>
 </div>
-<div class="mut">WASD / arrows / gamepad · <kbd>Enter</kbd>/<kbd>Space</kbd> or A = end turn early</div>
+<div id="hints" class="mut">WASD / arrows / gamepad · <kbd>Enter</kbd>/<kbd>Space</kbd> or A = end turn early</div>
 <div id="score" class="mut"></div>
 <div id="dice"></div>
 <div id="overlay"></div>
@@ -215,16 +218,20 @@ const FIELDS = [
 const IN = {};
 {
   const panel = document.getElementById('panel');
+  const coarse = matchMedia('(pointer:coarse)').matches;
   let catDiv = null;
   for (const f of FIELDS) {
     if (f.cat) {
-      const h = document.createElement('h3'); h.textContent = '▾ ' + f.cat;
-      catDiv = document.createElement('div'); catDiv.className = 'cat';
+      const h = document.createElement('h3'); h.textContent = coarse ? '▸ ' + f.cat : '▾ ' + f.cat;
+      const cd = document.createElement('div'); cd.className = 'cat';
+      if (coarse) cd.hidden = true; // small screen: start collapsed
       h.addEventListener('click', () => {
-        catDiv.hidden = !catDiv.hidden;
-        h.textContent = (catDiv.hidden ? '▸ ' : '▾ ') + f.cat;
+        cd.hidden = !cd.hidden;
+        h.textContent = (cd.hidden ? '▸ ' : '▾ ') + f.cat;
       });
-      panel.appendChild(h); panel.appendChild(catDiv); continue;
+      panel.appendChild(h); panel.appendChild(cd);
+      catDiv = cd;
+      continue;
     }
     const lb = document.createElement('label');
     const name = document.createElement('span'); name.textContent = f.label; lb.appendChild(name);
@@ -340,6 +347,11 @@ function step(dx, dy) {
   send({ t: 'step', dx, dy });
 }
 function doneTurn() { if (myTurn()) send({ t: 'done' }); }
+
+// background the tab mid-turn: ask the server to park the timer until you return
+document.addEventListener('visibilitychange', () => {
+  if (myTurn()) send(document.hidden ? { t: 'pause' } : { t: 'resume' });
+});
 
 // touch d-pad + skip (coarse pointers only)
 {
@@ -528,11 +540,11 @@ function draw(now) {
   } else lb.hidden = true;
   if (st.phase === 'move' && st.turnId) {
     const tp = st.players.find(p => p.id === st.turnId);
-    const left = Math.max(0, S.turnMsAtRecv - (now - S.lastStateAt));
+    const left = st.paused ? 8000 : Math.max(0, S.turnMsAtRecv - (now - S.lastStateAt));
     document.getElementById('timerfill').style.width = (100 * left / 8000) + '%';
-    banner.innerHTML = tp.id === S.me
+    banner.innerHTML = (tp.id === S.me
       ? `Your turn — roll ${tp.roll}, moves left: <b>${tp.roll - tp.used}</b>`
-      : `${tp.name}'s turn — roll ${tp.roll}, moves left: ${tp.roll - tp.used}`;
+      : `${tp.name}'s turn — roll ${tp.roll}, moves left: ${tp.roll - tp.used}`) + (st.paused ? ' <span class="mut">(paused)</span>' : '');
     banner.style.color = tp.color;
   } else if (st.phase === 'dots') {
     banner.textContent = '…dots on the move…'; banner.style.color = '#8b98a5';

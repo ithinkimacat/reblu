@@ -357,6 +357,7 @@ function spawnPhase() {
 // ---------- turn loop ----------
 let turnIdx = 0;
 let turnTimer = null;
+let turnPauseLeft = 0; // active player's tab hidden: turn timer parks until they return
 
 // Begin pressed by everyone in the lobby: fresh board, first turn
 // fresh goal spot for the teleport rule: empty, far from start
@@ -401,7 +402,7 @@ function turnLoop() {
   G.goalJump = null;
   if (p.dead) respawnPlayer(p); // "respawn at start next tick"
   p.roll = d6(); p.used = 0; p.lastDir = null;
-  G.phase = 'move'; G.turnId = p.id; G.turnEndsAt = Date.now() + TURN_MS;
+  G.phase = 'move'; G.turnId = p.id; G.turnEndsAt = Date.now() + TURN_MS; G.paused = false; turnPauseLeft = 0;
   broadcast();
   turnTimer = setTimeout(() => endMove(p.id), TURN_MS);
 }
@@ -409,6 +410,7 @@ function turnLoop() {
 function endMove(id) {
   if (G.phase !== 'move' || G.turnId !== id) return;
   clearTimeout(turnTimer);
+  G.paused = false; turnPauseLeft = 0;
   const p = G.players.get(id);
   if (p && !p.dead) {
     evalLanding(p);
@@ -444,6 +446,7 @@ function snapshot() {
   return JSON.stringify({
     t: 'state', tick: G.tick, phase: G.phase, winner: G.winner,
     turnId: G.turnId,
+    paused: !!G.paused,
     turnMsLeft: G.phase === 'move' ? Math.max(0, G.turnEndsAt - Date.now()) : 0,
     obs: [...G.obs].map(k => k.split(',').map(Number)),
     blasts: G.lastBlasts,
@@ -504,6 +507,26 @@ wss.on('connection', ws => {
     } else if (m.t === 'begin') {
       const p = G.players.get(clients.get(ws));
       if (p && G.phase === 'lobby') { p.ready = true; broadcast(); }
+    } else if (m.t === 'pause') { // active player's tab went to the background
+      const id = clients.get(ws);
+      if (G.phase === 'move' && G.turnId === id && turnTimer && !G.paused) {
+        clearTimeout(turnTimer);
+        turnPauseLeft = Math.max(0, G.turnEndsAt - Date.now());
+        G.paused = true;
+        // watchdog: if they never come back, the turn still ends
+        turnTimer = setTimeout(() => endMove(G.turnId), turnPauseLeft + 60000);
+        broadcast();
+      }
+    } else if (m.t === 'resume') {
+      const id = clients.get(ws);
+      if (G.phase === 'move' && G.turnId === id && G.paused) {
+        G.paused = false;
+        G.turnEndsAt = Date.now() + turnPauseLeft;
+        turnPauseLeft = 0;
+        clearTimeout(turnTimer);
+        turnTimer = setTimeout(() => endMove(G.turnId), Math.max(0, G.turnEndsAt - Date.now()));
+        broadcast();
+      }
     } else if (m.t === 'step') {
       tryStep(clients.get(ws), m.dx | 0, m.dy | 0);
     } else if (m.t === 'done') {
