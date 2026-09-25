@@ -53,12 +53,23 @@
   #hatlabel { font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.08em; }
   #begin { font:inherit; font-weight:800; font-size:18px; padding:10px 0; border:0; border-radius:8px; background:#2ea043; color:#fff; cursor:pointer; }
   #begin:disabled { background:#2a2f36; color:#8b98a5; cursor:default; }
-  #touch { display:none; gap:14px; align-items:center; user-select:none; -webkit-user-select:none; }
+  #touch { display:none; gap:16px; align-items:center; user-select:none; -webkit-user-select:none; }
   @media (pointer:coarse) { #touch { display:flex; } #hints { display:none; } #score { font-size:12px; text-align:center; } }
-  #dpad { display:grid; grid-template-columns:repeat(3,54px); grid-template-rows:repeat(2,54px); gap:4px; }
-  #dpad button, #skip { background:#222a33; color:var(--fg); border:1px solid #30363d; border-radius:8px; font:700 20px system-ui,sans-serif; touch-action:none; }
-  #dpad button:active, #skip:active { background:#2d3742; }
-  #skip { height:54px; padding:0 26px; font-size:15px; }
+  /* gamepad-style d-pad: one cross pad, sunken shell, raised buttons */
+  #dpad { display:grid; grid-template-columns:repeat(3,56px); grid-template-rows:repeat(3,56px); gap:3px; padding:10px; background:#10151b; border-radius:18px; box-shadow:inset 0 2px 8px #000a, 0 4px 10px #0006; }
+  #dpad button { position:relative; background:linear-gradient(180deg,#333c46,#232a32); border:1px solid #0b0e11; border-radius:10px; touch-action:none; box-shadow:inset 0 1px 0 #ffffff14, 0 2px 4px #0007; }
+  #dpad button::after { content:''; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
+  #du::after { border-left:10px solid transparent; border-right:10px solid transparent; border-bottom:14px solid #aab6c2; margin-top:3px; }
+  #dd::after { border-left:10px solid transparent; border-right:10px solid transparent; border-top:14px solid #aab6c2; margin-bottom:3px; }
+  #dl::after { border-top:10px solid transparent; border-bottom:10px solid transparent; border-right:14px solid #aab6c2; margin-left:3px; }
+  #dr::after { border-top:10px solid transparent; border-bottom:10px solid transparent; border-left:14px solid #aab6c2; margin-right:3px; }
+  #dpad button:active { background:linear-gradient(180deg,#232a32,#1a2026); transform:scale(.92); box-shadow:none; }
+  #dpad button:active::after { filter:brightness(1.6); }
+  /* gamepad-style action button: round, springy */
+  #actcol { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  #actcol .mut { font-size:12px; }
+  #skip { width:68px; height:68px; border-radius:50%; background:radial-gradient(circle at 35% 30%, #46c063, #22883c); border:1px solid #0a0d10; color:#eaffef; font:800 24px system-ui,sans-serif; touch-action:none; box-shadow:inset 0 2px 0 #ffffff2e, inset 0 -4px 8px #0006, 0 5px 12px #0007; }
+  #skip:active { transform:translateY(2px) scale(.94); background:radial-gradient(circle at 35% 30%, #3aae56, #1d7233); box-shadow:inset 0 1px 0 #ffffff10, 0 1px 3px #0007; }
   @media (orientation:landscape) and (pointer:coarse) {
     #touch { position:fixed; right:calc(10px + env(safe-area-inset-right)); bottom:calc(10px + env(safe-area-inset-bottom)); flex-direction:column; z-index:3; }
   }
@@ -71,10 +82,14 @@
 <canvas id="c"></canvas>
 <div id="touch">
   <div id="dpad">
-    <span></span><button type="button" id="du">&#9650;</button><span></span>
-    <button type="button" id="dl">&#9664;</button><button type="button" id="dd">&#9660;</button><button type="button" id="dr">&#9654;</button>
+    <span></span><button type="button" id="du" aria-label="up"></button><span></span>
+    <button type="button" id="dl" aria-label="left"></button><span></span><button type="button" id="dr" aria-label="right"></button>
+    <span></span><button type="button" id="dd" aria-label="down"></button><span></span>
   </div>
-  <button type="button" id="skip">SKIP TURN</button>
+  <div id="actcol">
+    <button type="button" id="skip" aria-label="skip turn">A</button>
+    <span class="mut">skip</span>
+  </div>
 </div>
 <div id="hints" class="mut">WASD / arrows / gamepad · <kbd>Enter</kbd>/<kbd>Space</kbd> or A = end turn early</div>
 <div id="score" class="mut"></div>
@@ -218,13 +233,12 @@ const FIELDS = [
 const IN = {};
 {
   const panel = document.getElementById('panel');
-  const coarse = matchMedia('(pointer:coarse)').matches;
   let catDiv = null;
   for (const f of FIELDS) {
     if (f.cat) {
-      const h = document.createElement('h3'); h.textContent = coarse ? '▸ ' + f.cat : '▾ ' + f.cat;
+      const h = document.createElement('h3'); h.textContent = '▸ ' + f.cat;
       const cd = document.createElement('div'); cd.className = 'cat';
-      if (coarse) cd.hidden = true; // small screen: start collapsed
+      cd.hidden = true; // collapsed by default; tap the header to open
       h.addEventListener('click', () => {
         cd.hidden = !cd.hidden;
         h.textContent = (cd.hidden ? '▸ ' : '▾ ') + f.cat;
@@ -353,12 +367,22 @@ document.addEventListener('visibilitychange', () => {
   if (myTurn()) send(document.hidden ? { t: 'pause' } : { t: 'resume' });
 });
 
-// touch d-pad + skip (coarse pointers only)
+// touch d-pad + skip (coarse pointers only): haptic tick on press, hold to repeat moves
+const buzz = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
 {
   const pad = [['du', 0, -1], ['dd', 0, 1], ['dl', -1, 0], ['dr', 1, 0]];
-  for (const [id, dx, dy] of pad)
-    document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); step(dx, dy); });
-  document.getElementById('skip').addEventListener('pointerdown', e => { e.preventDefault(); doneTurn(); });
+  for (const [id, dx, dy] of pad) {
+    const b = document.getElementById(id);
+    let rep = null;
+    b.addEventListener('pointerdown', e => {
+      e.preventDefault(); buzz(8);
+      step(dx, dy);
+      rep = setInterval(() => step(dx, dy), 170);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave'])
+      b.addEventListener(ev, () => { clearInterval(rep); rep = null; });
+  }
+  document.getElementById('skip').addEventListener('pointerdown', e => { e.preventDefault(); buzz(20); doneTurn(); });
 }
 
 const KEYS = { w:[0,-1], arrowup:[0,-1], s:[0,1], arrowdown:[0,1], a:[-1,0], arrowleft:[-1,0], d:[1,0], arrowright:[1,0] };
