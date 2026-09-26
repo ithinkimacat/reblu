@@ -230,6 +230,14 @@ const FIELDS = [
   { k: 'sizeX', label: 'Width', suffix: 'cells', min: 15, max: 40 },
   { k: 'sizeY', label: 'Height', suffix: 'cells', min: 15, max: 40 },
   { k: 'obs', label: 'Obstacles', min: 0, max: 100 },
+  { cat: 'Green dots' },
+  { k: 'greenEvery', label: 'Spawn every', suffix: 'turns, 0=off', min: 0, max: 10 },
+  { k: 'greenCount', label: 'Spawn count', min: 1, max: 5 },
+  { k: 'trail', label: 'Trail', suffix: 'cells', min: 1, max: 10 },
+  { cat: 'Yellow dots' },
+  { k: 'yellowEvery', label: 'Spawn every', suffix: 'turns, 0=off', min: 0, max: 10 },
+  { k: 'yellowSpeed', label: 'Cells per turn', min: 1, max: 8 },
+  { k: 'yellowCount', label: 'Spawn count', min: 1, max: 5 },
 ];
 const IN = {};
 {
@@ -351,6 +359,8 @@ function syncEnts(m) {
   for (const p of m.players) touch('p' + p.id, p.x, p.y);
   for (const b of m.blues) touch('b' + b.id, b.x, b.y);
   for (const r of m.reds) touch('r' + r.id, r.x, r.y);
+  for (const g of m.greens) touch('g' + g.id, g.x, g.y);
+  for (const yl of m.yellows) touch('y' + yl.id, yl.x, yl.y);
   for (const k of S.ents.keys()) if (!seen.has(k)) S.ents.delete(k);
 }
 
@@ -477,6 +487,12 @@ function draw(now) {
   ctx.fillStyle = '#3a3f45';
   for (const [x, y] of st.obs) { ctx.beginPath(); ctx.roundRect(x*cell+1.5, y*cell+1.5, cell-3, cell-3, 3); ctx.fill(); }
 
+  // green trail tiles
+  for (const t of st.greenTiles || []) {
+    ctx.fillStyle = `rgba(74,222,128,${0.25 + 0.3 * Math.min(1, t.life / 4)})`;
+    ctx.fillRect(t.x*cell + 2, t.y*cell + 2, cell - 4, cell - 4);
+  }
+
   // dots
   for (const b of st.blues) {
     const e = S.ents.get('b' + b.id); if (!e) continue;
@@ -486,17 +502,42 @@ function draw(now) {
       ctx.fillStyle = `rgba(88,166,255,${0.25 + 0.3 * g})`;
       ctx.beginPath(); ctx.arc(cx, cy, cell * (0.45 + 0.15 * g), 0, 7); ctx.fill();
     }
-    ctx.fillStyle = b.boost ? '#79b8ff' : '#1f6feb';
+    ctx.fillStyle = b.mix === 'g' ? '#3fb950' : (b.boost ? '#79b8ff' : '#1f6feb');
     ctx.beginPath(); ctx.arc(cx, cy, cell * 0.32, 0, 7); ctx.fill();
-    ctx.fillStyle = '#ffffff88'; ctx.beginPath(); ctx.arc(cx - cell*0.08, cy - cell*0.08, cell*0.08, 0, 7); ctx.fill();
+    if (b.mix === 'g') { // Gb: small blue center
+      ctx.fillStyle = '#1f6feb';
+      ctx.beginPath(); ctx.arc(cx, cy, cell * 0.14, 0, 7); ctx.fill();
+    } else {
+      ctx.fillStyle = '#ffffff88'; ctx.beginPath(); ctx.arc(cx - cell*0.08, cy - cell*0.08, cell*0.08, 0, 7); ctx.fill();
+    }
   }
   for (const r of st.reds) {
     const e = S.ents.get('r' + r.id); if (!e) continue;
     const [cx, cy] = at(e.x, e.y);
     const wob = Math.sin(now / 150 + r.id) * cell * 0.04;
-    ctx.fillStyle = '#f85149';
+    ctx.fillStyle = r.mix === 'g' ? '#3fb950' : '#f85149';
     ctx.beginPath(); ctx.arc(cx, cy + wob, cell * 0.3, 0, 7); ctx.fill();
-    ctx.fillStyle = '#ffd0cc'; ctx.beginPath(); ctx.arc(cx - cell*0.07, cy - cell*0.07 + wob, cell*0.07, 0, 7); ctx.fill();
+    if (r.mix === 'g') { // Gr: small red center
+      ctx.fillStyle = '#f85149';
+      ctx.beginPath(); ctx.arc(cx, cy + wob, cell * 0.13, 0, 7); ctx.fill();
+    } else {
+      ctx.fillStyle = '#ffd0cc'; ctx.beginPath(); ctx.arc(cx - cell*0.07, cy - cell*0.07 + wob, cell*0.07, 0, 7); ctx.fill();
+    }
+  }
+  // static greens + yellow bouncers
+  for (const g of st.greens || []) {
+    const e = S.ents.get('g' + g.id); if (!e) continue;
+    const [cx, cy] = at(e.x, e.y);
+    ctx.fillStyle = '#2ea043';
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.3, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ffffff55'; ctx.beginPath(); ctx.arc(cx - cell*0.07, cy - cell*0.07, cell*0.07, 0, 7); ctx.fill();
+  }
+  for (const yl of st.yellows || []) {
+    const e = S.ents.get('y' + yl.id); if (!e) continue;
+    const [cx, cy] = at(e.x, e.y);
+    ctx.fillStyle = '#f1e05a';
+    ctx.beginPath(); ctx.roundRect(cx - cell*0.3, cy - cell*0.3, cell*0.6, cell*0.6, cell*0.12); ctx.fill();
+    ctx.fillStyle = '#00000055'; ctx.beginPath(); ctx.arc(cx - cell*0.08, cy - cell*0.08, cell*0.07, 0, 7); ctx.fill();
   }
 
   // players (bounce slightly while riding)
@@ -559,7 +600,8 @@ function draw(now) {
     b.disabled = !me; // clickable until you declare ready
     b.textContent = iReady ? 'waiting for others...' : 'READY';
     document.getElementById('lobbyhint').textContent =
-      st.players.filter(p => p.ready).length + ' / ' + st.players.length + ' ready — game starts when all press Ready';
+      st.players.filter(p => p.ready).length + ' / ' + st.players.length + ' ready — ' +
+      (st.players.length < 2 ? 'need at least 2 players to start' : 'game starts when all press Ready');
     banner.textContent = 'lobby — press Begin when ready'; banner.style.color = '#8b98a5';
     document.getElementById('timerfill').style.width = '0%';
   } else lb.hidden = true;

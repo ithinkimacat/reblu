@@ -67,9 +67,9 @@ newGame();
   g.obs.clear();
   g.w = 25; g.h = 25;
   // two blues; b1 boxed in by obstacles, red at origin must target b2
-  g.blues = [{ id: 1, x: 10, y: 10, boost: 0 }, { id: 2, x: 5, y: 0, boost: 0 }];
+  g.blues = [{ id: 1, x: 10, y: 10, boost: 0, mix: null, trailLeft: 0 }, { id: 2, x: 5, y: 0, boost: 0, mix: null, trailLeft: 0 }];
   g.obs.add(key(9, 10)); g.obs.add(key(11, 10)); g.obs.add(key(10, 9)); g.obs.add(key(10, 11));
-  g.reds = [{ id: 1, x: 0, y: 2, px: 0, py: 2 }, { id: 2, x: 0, y: 3, px: 0, py: 3 }];
+  g.reds = [{ id: 1, x: 0, y: 2, px: 0, py: 2, mix: null, trailLeft: 0 }, { id: 2, x: 0, y: 3, px: 0, py: 3, mix: null, trailLeft: 0 }];
   g.phase = 'move'; g.turnId = 1; g.tick = 1;
   let done;
   const p = new Promise(r => { mod.endMove(1); const iv = setInterval(() => { if (g.phase === 'dots') { clearInterval(iv); r(); } }, 50); });

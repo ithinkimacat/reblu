@@ -18,7 +18,11 @@ const d6 = () => 1 + Math.floor(Math.random() * 6);
 
 // ---------- game state ----------
 // live-tunable settings; persisted across newGame() resets, edited from client panel
-const CFG = { blueEvery: 2, redEvery: 3, blueSpeed: 3, redSpeed: 4, obs: 20, blueCount: 5, redCount: 3, sizeX: 15, sizeY: 15 };
+const CFG = {
+  blueEvery: 2, redEvery: 3, blueSpeed: 3, redSpeed: 4, obs: 20, blueCount: 5, redCount: 3, sizeX: 15, sizeY: 15,
+  greenEvery: 0, greenCount: 1, trail: 4,   // green: off by default; trail = cells left behind (0 in greenEvery = dot type off)
+  yellowEvery: 0, yellowSpeed: 3, yellowCount: 1,
+};
 let G;
 let worldGen = 0; // bumped by newGame(): async phase chains from a dead world abort on mismatch
 
@@ -46,8 +50,11 @@ function newGame(keepPlayers) {
     winner: null,
     obs: new Set(),
     players: new Map(),  // id -> {id,name,color,x,y,roll,used,lastDir,rider,dead,wins,ready}
-    blues: [],           // {id,x,y,boost}  boost 2=>speed 4 next, 1=>3, 0=>2
-    reds: [],            // {id,x,y,px,py}
+    blues: [],           // {id,x,y,boost,mix:'g'|null,trailLeft}  mix 'g' = Gb: green body, blue center
+    reds: [],            // {id,x,y,px,py,mix,trailLeft}           mix 'g' = Gr: green body, red center
+    greens: [],          // static green dots {id,x,y} — absorb on step: trail effect
+    yellows: [],         // {id,x,y,dx,dy} DVD-logo bouncers, eat any dot they cross
+    greenTiles: new Map(), // 'x,y' -> turns left on that trail tile
     lastBlasts: [],
     cfg: CFG,
     turnId: null,
@@ -122,7 +129,7 @@ function bfsPath(sx, sy, tx, ty, maxSteps, avoid) {
   if (!found) return [];
   const cells = [];
   for (let k = found; k; k = prev.get(k)) cells.unshift(k.split(',').map(Number));
-  return cells.slice(0, maxSteps); // includes target, excludes start
+  return cells.slice(1, maxSteps + 1); // includes target, excludes start
 }
 
 // cells a red could blast now or next phase: its 3x3 neighborhood
@@ -142,7 +149,8 @@ function randomEmptyCell() {
     if (G.obs.has(k)) continue;
     if ((x === START[0] && y === START[1]) || (x === fin()[0] && y === fin()[1])) continue;
     if ([...G.players.values()].some(p => !p.dead && p.x === x && p.y === y)) continue;
-    if (G.blues.some(b => b.x === x && b.y === y) || G.reds.some(r => r.x === x && r.y === y)) continue;
+    if (G.blues.some(b => b.x === x && b.y === y) || G.reds.some(r => r.x === x && r.y === y) ||
+        G.greens.some(g => g.x === x && g.y === y) || G.yellows.some(yl => yl.x === x && yl.y === y)) continue;
     return [x, y];
   }
   return null;
@@ -201,8 +209,18 @@ function animateDotMoves(movers, done) {
     if (G.gen !== gen) return; // world was reset mid-animation
     for (const m of movers) {
       if (step < m.path.length) {
+        const [px, py] = [m.dot.x, m.dot.y];
         [m.dot.x, m.dot.y] = m.path[step];
+        if (m.dot.mix === 'g' && m.dot.trailLeft > 0) G.greenTiles.set(key(px, py), G.cfg.trail);
         moveRiders(m.dot, m.ref);
+        // blue or red crossing a static green dot absorbs it (mix + trail countdown (re)news)
+        if ((m.ref[0] === 'b' || m.ref[0] === 'r') && m.dot.mix !== 'g') {
+          const gg = G.greens.find(g => g.x === m.dot.x && g.y === m.dot.y);
+          if (gg) { m.dot.mix = 'g'; m.dot.trailLeft = G.cfg.trail; m.dot.px = m.dot.x; m.dot.py = m.dot.y; G.greens = G.greens.filter(x => x !== gg); }
+        } else if (m.dot.mix === 'g') {
+          const gg = G.greens.find(g => g.x === m.dot.x && g.y === m.dot.y);
+          if (gg) { m.dot.trailLeft = G.cfg.trail; G.greens = G.greens.filter(x => x !== gg); } // trail countdown renews
+        }
       }
     }
     G.phase = 'dots';
@@ -241,6 +259,7 @@ function bluePhase(done) {
         G.blues = G.blues.filter(x => x !== b);
       }
     }
+    greenMix();
     broadcast();
     // goal teleport: a blue dot arrived before any player did
     const [gx, gy] = fin();
@@ -256,19 +275,20 @@ function bluePhase(done) {
   });
 }
 
-// flood from a red: path to the nearest reachable blue (walls and other reds respected).
-// claimed blues are skipped unless allowClaimed — spreads reds across targets.
-function redPath(r, claimed, allowClaimed) {
+// flood from a red: path to the nearest reachable blue (or unclaimed green — reds absorb greens).
+// claimed targets are skipped unless allow* — spreads reds across targets.
+function redPath(r, claimed, claimedGreens, allowClaimed) {
   const blocked = new Set(G.reds.filter(o => o !== r).map(o => key(o.x, o.y)));
   const prev = new Map([[key(r.x, r.y), null]]);
   const q = [[r.x, r.y]];
   while (q.length) {
     const [x, y] = q.shift(), k = key(x, y);
     const b = (x !== r.x || y !== r.y) && G.blues.find(b => b.x === x && b.y === y && (allowClaimed || !claimed.has(b.id)));
-    if (b) {
+    const gg = (x !== r.x || y !== r.y) && G.greens.find(g => g.x === x && g.y === y && !claimedGreens.has(g.id));
+    if (b || gg) {
       const cells = [];
       for (let kk = k; kk; kk = prev.get(kk)) cells.unshift(kk.split(',').map(Number));
-      claimed.add(b.id);
+      if (gg) claimedGreens.add(gg.id); else claimed.add(b.id);
       return cells.slice(1, G.cfg.redSpeed + 1);
     }
     for (const [dx, dy] of [[0,1],[1,0],[0,-1],[-1,0]]) {
@@ -281,11 +301,11 @@ function redPath(r, claimed, allowClaimed) {
 }
 
 function redPhase(done) {
-  const claimed = new Set();
+  const claimed = new Set(), claimedGreens = new Set();
   const movers = G.reds.map(r => {
     r.px = r.x; r.py = r.y;
-    let path = redPath(r, claimed, false);
-    if (!path.length) path = redPath(r, claimed, true); // every reachable blue taken: gang up anyway
+    let path = redPath(r, claimed, claimedGreens, false);
+    if (!path.length) path = redPath(r, claimed, claimedGreens, true); // every reachable target taken: gang up anyway
     return path.length ? { dot: r, ref: 'r' + r.id, path } : null;
   }).filter(Boolean);
   const gen = G.gen;
@@ -299,6 +319,7 @@ function redPhase(done) {
       for (const r of gone) clearRiders('r' + r.id);
       G.reds = G.reds.filter(r => !gone.has(r));
     }
+    greenMix();
     done();
   });
 }
@@ -315,18 +336,40 @@ function losBlocked(x0, y0, x1, y1) {
   return false;
 }
 
+// blast cells: 3x3 around the collision plus a 2-cell tail opposite the red's approach
+function blastCells(r) {
+  const dx = r.x - r.px, dy = r.y - r.py;
+  const dir = Math.abs(dx) >= Math.abs(dy) ? [Math.sign(dx), 0] : [0, Math.sign(dy)];
+  const cells = [];
+  for (let ex = -1; ex <= 1; ex++) for (let ey = -1; ey <= 1; ey++) cells.push([r.x + ex, r.y + ey]);
+  if (dir[0] || dir[1]) for (let i = 1; i <= 2; i++) cells.push([r.x - dir[0] * i, r.y - dir[1] * i]);
+  return cells.filter(([x, y]) => inGrid(x, y) && !losBlocked(r.x, r.y, x, y));
+}
+
+// green spread on mixing: every blast-radius cell becomes trail
+function spreadBlast(r) {
+  for (const [x, y] of blastCells(r)) G.greenTiles.set(key(x, y), G.cfg.trail);
+}
+
 function blastPhase() {
   const blasts = [];
-  for (const r of G.reds) {
+  for (const r of [...G.reds]) {
     const b = G.blues.find(b => b.x === r.x && b.y === r.y);
     if (!b) continue;
-    // extension: opposite of red's approach (reverse vector pre-move -> collision)
-    const dx = r.x - r.px, dy = r.y - r.py;
-    const dir = Math.abs(dx) >= Math.abs(dy) ? [Math.sign(dx), 0] : [0, Math.sign(dy)];
-    const cells = [];
-    for (let ex = -1; ex <= 1; ex++) for (let ey = -1; ey <= 1; ey++) cells.push([r.x + ex, r.y + ey]);
-    if (dir[0] || dir[1]) for (let i = 1; i <= 2; i++) cells.push([r.x - dir[0] * i, r.y - dir[1] * i]);
-    blasts.push({ x: r.x, y: r.y, cells: cells.filter(([x, y]) => inGrid(x, y) && !losBlocked(r.x, r.y, x, y)) });
+    if (r.mix === 'g' || b.mix === 'g') {
+      // mixed dots never blast: the opposite type converts the mixed one, green floods the blast radius
+      if (b.mix === 'g') { // Gb + R (or Gb + Gr): red center wins -> Gr
+        r.mix = 'g'; r.trailLeft = G.cfg.trail; r.px = r.x; r.py = r.y;
+        G.blues = G.blues.filter(x => x !== b); clearRiders('b' + b.id);
+      } else { // Gr + pure B -> Gb
+        b.mix = 'g'; b.trailLeft = G.cfg.trail;
+        G.reds = G.reds.filter(x => x !== r); clearRiders('r' + r.id);
+      }
+      spreadBlast(r);
+      continue;
+    }
+    const cells = blastCells(r);
+    blasts.push({ x: r.x, y: r.y, cells });
     G.reds = G.reds.filter(x => x !== r);
     G.blues = G.blues.filter(x => x !== b);
     clearRiders('r' + r.id); clearRiders('b' + b.id);
@@ -338,18 +381,88 @@ function blastPhase() {
   }
 }
 
-// spawns: every cfg.blueEvery / cfg.redEvery ticks (= player turns)
+// anything standing on a static green dot absorbs it: mix + trail countdown (re)news
+function greenMix() {
+  for (const b of G.blues) {
+    const g = G.greens.find(g => g.x === b.x && g.y === b.y);
+    if (g) { b.mix = 'g'; b.trailLeft = G.cfg.trail; G.greens = G.greens.filter(x => x !== g); clearRiders('g' + g.id); }
+  }
+  for (const r of G.reds) {
+    const g = G.greens.find(g => g.x === r.x && g.y === r.y);
+    if (g) { r.mix = 'g'; r.trailLeft = G.cfg.trail; r.px = r.x; r.py = r.y; G.greens = G.greens.filter(x => x !== g); clearRiders('g' + g.id); }
+  }
+}
+
+// yellow: DVD-logo bounce off walls and obstacles, eats any dot whose cell it crossed
+function yellowPath(yl, maxSteps) {
+  const path = [];
+  if (!yl.dx && !yl.dy) { yl.dx = Math.random() < 0.5 ? 1 : -1; yl.dy = Math.random() < 0.5 ? 1 : -1; }
+  let x = yl.x, y = yl.y;
+  for (let i = 0; i < maxSteps; i++) {
+    let nx = x + yl.dx, ny = y + yl.dy;
+    if (!inGrid(nx, ny) || G.obs.has(key(nx, ny))) {
+      // bounce: flip the axis that has room (DVD-logo style)
+      if (inGrid(x - yl.dx, y + yl.dy) && !G.obs.has(key(x - yl.dx, y + yl.dy))) { yl.dx = -yl.dx; nx = x + yl.dx; }
+      else if (inGrid(nx, y - yl.dy) && !G.obs.has(key(nx, y - yl.dy))) { yl.dy = -yl.dy; ny = y + yl.dy; }
+      else { yl.dx = -yl.dx; yl.dy = -yl.dy; nx = x + yl.dx; ny = y + yl.dy; if (!inGrid(nx, ny) || G.obs.has(key(nx, ny))) break; }
+    }
+    x = nx; y = ny; path.push([x, y]);
+  }
+  return path;
+}
+
+function yellowPhase(done) {
+  const movers = G.yellows.map(yl => {
+    const path = yellowPath(yl, G.cfg.yellowSpeed);
+    return path.length ? { dot: yl, ref: 'y' + yl.id, path } : null;
+  }).filter(Boolean);
+  const gen = G.gen;
+  animateDotMoves(movers, () => {
+    if (G.gen !== gen) return;
+    const crossed = new Set();
+    for (const m of movers) for (const [x, y] of m.path) crossed.add(key(x, y));
+    for (const [arr, ref] of [[G.blues, 'b'], [G.reds, 'r'], [G.greens, 'g']]) {
+      for (const d of [...arr]) if (crossed.has(key(d.x, d.y))) {
+        arr.splice(arr.indexOf(d), 1); clearRiders(ref + d.id);
+      }
+    }
+    for (const yl of [...G.yellows]) {
+      const other = movers.find(m => m.dot !== yl && m.path.some(([x, y]) => x === yl.x && y === yl.y));
+      if (other) G.yellows = G.yellows.filter(x => x !== yl); // two yellows cross: annihilate
+    }
+    done();
+  });
+}
+
+// spawnPhase: spawns + one tick of trail decay + mixed-dot countdowns
 function spawnPhase() {
+  // green trail tiles fade one turn at a time
+  for (const [k, v] of G.greenTiles) { if (v <= 1) G.greenTiles.delete(k); else G.greenTiles.set(k, v - 1); }
+  // mixed-dot green effect wears off when its countdown runs out
+  for (const b of G.blues) if (b.mix === 'g' && --b.trailLeft <= 0) b.mix = null;
+  for (const r of G.reds) if (r.mix === 'g' && --r.trailLeft <= 0) r.mix = null;
   if (G.tick % G.cfg.blueEvery === 0) {
     for (let i = 0; i < G.cfg.blueCount; i++) {
       const c = randomEmptyCell();
-      if (c) G.blues.push({ id: G.nextDotId++, x: c[0], y: c[1], boost: 0 });
+      if (c) G.blues.push({ id: G.nextDotId++, x: c[0], y: c[1], boost: 0, mix: null, trailLeft: 0 });
     }
   }
   if (G.tick % G.cfg.redEvery === 0) {
     for (let i = 0; i < G.cfg.redCount; i++) {
       const c = randomEmptyCell();
-      if (c) G.reds.push({ id: G.nextDotId++, x: c[0], y: c[1], px: c[0], py: c[1] });
+      if (c) G.reds.push({ id: G.nextDotId++, x: c[0], y: c[1], px: c[0], py: c[1], mix: null, trailLeft: 0 });
+    }
+  }
+  if (G.cfg.greenEvery && G.tick % G.cfg.greenEvery === 0) {
+    for (let i = 0; i < G.cfg.greenCount; i++) {
+      const c = randomEmptyCell();
+      if (c) G.greens.push({ id: G.nextDotId++, x: c[0], y: c[1] });
+    }
+  }
+  if (G.cfg.yellowEvery && G.tick % G.cfg.yellowEvery === 0) {
+    for (let i = 0; i < G.cfg.yellowCount; i++) {
+      const c = randomEmptyCell();
+      if (c) G.yellows.push({ id: G.nextDotId++, x: c[0], y: c[1], dx: 0, dy: 0 });
     }
   }
 }
@@ -390,7 +503,7 @@ function turnLoop() {
   if (G.phase === 'lobby') {
     broadcast();
     const ps = [...G.players.values()];
-    if (ps.length && ps.every(p => p.ready)) return startGame();
+    if (ps.length >= 2 && ps.every(p => p.ready)) return startGame();
     return void setTimeout(turnLoop, 500);
   }
   const ps = [...G.players.values()];
@@ -417,14 +530,14 @@ function endMove(id) {
     if (checkWin()) return; // pushed onto the finish still counts
   }
   const gen = G.gen;
-  bluePhase(() => redPhase(() => {
+  bluePhase(() => redPhase(() => yellowPhase(() => {
     if (G.gen !== gen) return; // world was reset mid-turn
     blastPhase();
     spawnPhase();
     G.phase = 'dots';
     broadcast();
     setTimeout(turnLoop, DOT_STEP_MS * 3); // let blast play out client-side
-  }));
+  })));
 }
 
 function tryStep(id, dx, dy) {
@@ -435,7 +548,10 @@ function tryStep(id, dx, dy) {
   const nx = p.x + dx, ny = p.y + dy;
   if (!inGrid(nx, ny) || G.obs.has(key(nx, ny))) return;
   if ([...G.players.values()].some(q => q !== p && !q.dead && q.x === nx && q.y === ny)) return;
+  if (p.trailLeft > 0) { G.greenTiles.set(key(p.x, p.y), G.cfg.trail); p.trailLeft--; } // green trail behind the player
   p.x = nx; p.y = ny; p.used++; p.lastDir = { dx, dy };
+  const g = G.greens.find(g => g.x === nx && g.y === ny);
+  if (g) { G.greens = G.greens.filter(x => x !== g); p.trailLeft = G.cfg.trail; } // stepped on green: pick it up
   if (checkWin()) return;
   broadcast();
   if (p.used >= p.roll) setTimeout(() => endMove(id), 500); // spent all steps: short beat, then dots go
@@ -454,12 +570,15 @@ function snapshot() {
     goalJump: G.goalJump,
     cfg: G.cfg,
     w: G.w, h: G.h,
+    greens: G.greens.map(g => ({ id: g.id, x: g.x, y: g.y })),
+    yellows: G.yellows.map(yl => ({ id: yl.id, x: yl.x, y: yl.y })),
+    greenTiles: [...G.greenTiles].map(([k, life]) => { const [x, y] = k.split(',').map(Number); return { x, y, life }; }),
     players: [...G.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
       roll: p.roll, used: p.used, dead: p.dead, wins: p.wins, rider: !!p.rider, ready: !!p.ready, hat: p.hat,
     })),
-    blues: G.blues.map(b => ({ id: b.id, x: b.x, y: b.y, boost: b.boost })),
-    reds: G.reds.map(r => ({ id: r.id, x: r.x, y: r.y })),
+    blues: G.blues.map(b => ({ id: b.id, x: b.x, y: b.y, boost: b.boost, mix: b.mix || null })),
+    reds: G.reds.map(r => ({ id: r.id, x: r.x, y: r.y, mix: r.mix || null })),
   });
 }
 
@@ -500,6 +619,10 @@ wss.on('connection', ws => {
       if (m.obs != null) G.cfg.obs = clamp(m.obs, 0, 100);
       if (m.sizeX != null) G.cfg.sizeX = clamp(m.sizeX, 15, 40);
       if (m.sizeY != null) G.cfg.sizeY = clamp(m.sizeY, 15, 40);
+      for (const k of ['greenEvery', 'yellowEvery']) if (m[k] != null) G.cfg[k] = clamp(m[k], 0, 10); // 0 = dot type off
+      for (const k of ['greenCount', 'yellowCount']) if (m[k] != null) G.cfg[k] = clamp(m[k], 1, 5);
+      if (m.trail != null) G.cfg.trail = clamp(m.trail, 1, 10);
+      if (m.yellowSpeed != null) G.cfg.yellowSpeed = clamp(m.yellowSpeed, 1, 8);
       broadcast();
     } else if (m.t === 'hat') { // hats are a lobby activity, like settings
       const p = G.players.get(clients.get(ws));
